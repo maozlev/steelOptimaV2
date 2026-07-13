@@ -28,6 +28,9 @@ SLOT_FIT_THRESHOLD = 0.90
 # is 234pt), and must not be mistaken for a box that exists to hold text.
 TEXT_BOX_MAX_SPAN_PT = 40.0
 # two shells overlapping more than this are the same outline drawn twice...
+# A part is BIG. A top-level loop smaller than this fraction of the biggest one is a
+# title-block symbol, not a part — it must not be allowed to admit its own innards.
+MIN_PART_AREA_FRAC = 0.02
 DUPLICATE_IOU = 0.40
 # ...unless one is genuinely NESTED inside the other and materially smaller, in which
 # case it is a real cutout: a gasket's bore fills 78% of its ring and must survive.
@@ -204,11 +207,55 @@ def _dedupe(shells: list[tuple[Polygon, bool]]) -> list[tuple[Polygon, bool]]:
     return kept
 
 
-# Tried and rejected: gating candidates on "must lie inside a part outline", where a part
-# outline is a top-level closed loop. It does not work. The title-block symbols ARE closed
-# loops with nothing around them, so they qualify as parts and admit themselves; and on
-# 12562 it dropped a real slot, taking recall from 93% to 86%. A filter that loses real
-# holes to catch three symbols is the wrong trade. Left here so nobody rebuilds it.
+def _part_outlines(inner: list[tuple[Polygon, bool]]) -> list[Polygon]:
+    """The outlines of the parts drawn on this sheet.
+
+    A cutout is cut out of the PART. Anything outside every part is on the paper, not in
+    the metal — Doc_HK3573's "First Angle Projection" symbol is two concentric circles and
+    scores 0.98 as a hole, and no amount of geometry will ever say otherwise. WHERE it sits
+    is what makes it not a hole.
+
+    A part outline is a closed CAD loop that lies inside no other loop AND IS BIG. The size
+    test is what makes this work at all: an earlier version without it failed, because
+    those title-block symbols are themselves top-level loops with nothing around them, so
+    they qualified as parts and cheerfully admitted themselves. A Ø20mm symbol is not a
+    part on a sheet whose part is Ø686.
+
+    Planar faces are deliberately not eligible: the sheet border, the title-block grid and
+    the space between dimension lines all polygonize into large faces, any of which would
+    "contain" the whole page and make this a no-op.
+    """
+    loops = [s for s, from_loop in inner if from_loop]
+    if not loops:
+        return []
+    top = [
+        s
+        for s in loops
+        if not any(
+            o is not s and o.area > s.area and o.contains(s.representative_point())
+            for o in loops
+        )
+    ]
+    if not top:
+        return []
+
+    biggest = max(s.area for s in top)
+    return [
+        s
+        for s in top
+        # big enough to be a part, and not a title-block symbol
+        if s.area >= MIN_PART_AREA_FRAC * biggest
+        # AND it actually has something in it. A part CONTAINS cutouts; a shape with
+        # nothing inside it is not a part. Without this, 12562 — whose octagonal outline
+        # is only a planar face, never a closed loop — declared its own two SLOTS to be
+        # "parts", and then threw away the slot that did not happen to sit inside the
+        # other one. A part outline we cannot see is better than a part outline we invent:
+        # when this finds nothing, the filter simply does not run.
+        and any(
+            o is not s and o.area < s.area and s.contains(o.representative_point())
+            for o, _ in inner
+        )
+    ]
 
 
 def ideal_obround(mrr: Polygon, length: float, width: float) -> Polygon | None:
@@ -333,9 +380,15 @@ def build_candidates(
     kept = _dedupe([(s, fl) for s, fl, _ in with_parent])
     kept_ids = {id(s) for s, _ in kept}
 
+    # A cutout is cut out of a PART. A shape sitting outside every part is on the paper,
+    # not in the metal — a title-block symbol, a projection marker, a control frame.
+    parts = _part_outlines(inner)
+
     candidates: list[Candidate] = []
     for s, from_loop, parent in with_parent:
         if id(s) not in kept_ids:
+            continue
+        if parts and not any(p.contains(s.representative_point()) for p in parts):
             continue
         if s.area > parent.area * MAX_CUTOUT_PARENT_RATIO:
             continue

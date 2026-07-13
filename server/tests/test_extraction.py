@@ -103,13 +103,11 @@ def test_score_bounds():
 PIPELINE_CASES = {
     "A (3).pdf": {"hole": 128, "slot": 20},
     "A (4).pdf": {"hole": 293},
-    # Doc_HK3573 is a gasket: 16 bolt holes + 1 central Ø605 bore = 17 real cutouts,
-    # confirmed by Maoz against the drawing. All 17 are found. The extra 2 holes and 4
-    # slots are annotation artifacts (the boxed Ø605/Ø642 callouts, the ⊕□1 control
-    # frame): this sheet is drawn wholly in black, so ink.split_ink cannot separate its
-    # layers by colour. Recall matters more than precision here — a false positive costs
-    # a click, a missed hole costs a part.
-    "Doc_HK3573_290626083217_00 (1).pdf": {"hole": 19, "slot": 1},
+    # Doc_HK3573 is a gasket: 16 bolt holes + 1 central Ø605 bore = 17, confirmed by Maoz
+    # against the drawing. Exactly 17 — no more. The title-block artifacts that used to
+    # survive here (the "First Angle Projection" symbol's two circles, the ⊕□1 frame's
+    # square) are gone: they sit outside the part, and a cutout is cut out of the PART.
+    "Doc_HK3573_290626083217_00 (1).pdf": {"hole": 17},
 }
 
 

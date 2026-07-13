@@ -128,6 +128,28 @@ def test_a_rings_bore_is_not_deleted_as_a_duplicate_of_the_ring():
     assert len(bolts) == 16
 
 
+def test_title_block_symbols_are_not_cutouts():
+    """A cutout is cut out of the PART. Anything outside every part is on the paper.
+
+    Doc_HK3573's title block holds a "First Angle Projection" symbol (two concentric
+    circles) and a ⊕□1 feature-control frame (a square). They are drawn in thick black ink
+    and they ARE, geometrically, circles and a square — they scored 0.98 as holes and no
+    shape rule will ever say otherwise. WHERE they sit is what makes them not holes.
+
+    A part outline is a big top-level closed loop THAT CONTAINS SOMETHING. Both halves
+    matter: without the size test the symbols are top-level loops themselves and admit
+    their own innards; without "contains something", 12562 — whose octagonal outline is
+    only a planar face, never a loop — declared its own two slots to be parts and threw one
+    of them away.
+    """
+    page = fitz.open(PDFS_DIR / "Doc_HK3573_290626083217_00 (1).pdf")[0]
+    cands = extract_candidates(page)
+
+    # 16 bolt holes + the Ø605 bore. Exactly that, and nothing else.
+    assert len(cands) == 17, [c.measured_dims for c in cands]
+    assert all(c.kind == "hole" for c in cands)
+
+
 def test_annotation_ink_is_kept_for_the_scale_reader():
     """Annotation paths are filtered out of candidate-building, not thrown away:
     the dimension lines are what the sheet scale is recovered from."""
