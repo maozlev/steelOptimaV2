@@ -362,6 +362,7 @@ export default function WorkspaceView({
           scale={scale}
           locked={locked}
           busy={busy}
+          extracting={jobRunning}
           onSetScale={async (pageId, value) => {
             setBusy(true);
             setError(null);

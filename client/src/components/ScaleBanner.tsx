@@ -21,11 +21,14 @@ export default function ScaleBanner({
   scale,
   locked,
   busy,
+  extracting,
   onSetScale,
 }: {
   scale: ScaleStatus;
   locked: boolean;
   busy: boolean;
+  /** the scale is read DURING extraction — until that finishes there is nothing to say */
+  extracting: boolean;
   onSetScale: (pageId: number, scale: number) => void;
 }) {
   const [entry, setEntry] = useState<Record<number, string>>({});
@@ -44,6 +47,19 @@ export default function ScaleBanner({
 
   const unconfirmed = scale.pages.filter((p) => !p.confirmed);
   const disagreeing = scale.pages.filter((p) => p.confirmed && p.disagreement);
+
+  // The scale is read during extraction. Until that finishes there is simply no answer
+  // yet — and saying "no scale could be read from this drawing" while the job is still
+  // running is not the same claim at all. It reads as a failure, on a sheet that prints
+  // its scale in plain sight.
+  if (extracting && unconfirmed.length > 0) {
+    return (
+      <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900/60 px-4 py-1.5 text-xs text-zinc-400">
+        <span className="text-zinc-500">⏳</span>
+        Reading the sheet scale from the drawing…
+      </div>
+    );
+  }
 
   if (unconfirmed.length === 0 && disagreeing.length === 0) {
     const s = scale.pages[0]?.scale;
@@ -84,8 +100,8 @@ export default function ScaleBanner({
           <span className="text-amber-200/80">
             {scale.pages.length > 1 ? `Page ${p.page_index + 1}: ` : ""}
             {p.detected
-              ? `the drawing looks like ${formatScale(p.detected)}`
-              : "no scale could be read from this drawing"}
+              ? `the drawing reads as ${formatScale(p.detected)}`
+              : "couldn't read a scale — no printed “Scale N:M” and no dimension line to measure one from"}
             {p.note ? ` — ${p.note}` : ""}
           </span>
           {!locked && (
