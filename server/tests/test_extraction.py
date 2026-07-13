@@ -109,7 +109,7 @@ PIPELINE_CASES = {
     # frame): this sheet is drawn wholly in black, so ink.split_ink cannot separate its
     # layers by colour. Recall matters more than precision here — a false positive costs
     # a click, a missed hole costs a part.
-    "Doc_HK3573_290626083217_00 (1).pdf": {"hole": 19, "slot": 4},
+    "Doc_HK3573_290626083217_00 (1).pdf": {"hole": 19, "slot": 1},
 }
 
 

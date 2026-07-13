@@ -35,6 +35,14 @@ FRAME_MIN_CHANNEL = 0.6
 # a page with less than this share of dark ink is not using the convention
 MIN_GEOMETRY_SHARE = 0.05
 
+# ISO drafting also separates the layers by stroke WIDTH: visible part edges are drawn
+# thick, dimension / extension / leader / centre lines thin. Used when colour says
+# nothing — Doc_HK3573 is wholly black, 378 thin paths against 81 thick ones.
+THIN_TO_THICK_RATIO = 1.2
+MIN_GEOMETRY_WIDTH = 0.4
+# a stray coloured stroke or two does not mean the page uses the colour convention
+MIN_ANNOTATION_SHARE = 0.05
+
 
 
 def classify_path(path: dict) -> str:
@@ -50,23 +58,43 @@ def classify_path(path: dict) -> str:
     return ANNOTATION
 
 
+def split_by_width(paths: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Separate by stroke width, for a page drawn entirely in one colour.
+
+    ISO drafting draws visible part edges THICK and dimension / extension / leader /
+    centre lines THIN. Doc_HK3573 is wholly black — 378 paths at 0.36 wide against 81 at
+    0.72-1.44 — so colour says nothing and only the width does. Its thin extension lines
+    are what slice the ring into the crescent faces that were reaching the BOM.
+    """
+    widths = sorted({round(p["width"], 2) for p in paths if p.get("width")})
+    if len(widths) < 2:
+        return paths, []
+    cut = max(widths[0] * THIN_TO_THICK_RATIO, MIN_GEOMETRY_WIDTH)
+    geometry = [p for p in paths if (p.get("width") or 0) >= cut]
+    annotation = [p for p in paths if 0 < (p.get("width") or 0) < cut]
+    return (geometry, annotation) if geometry and annotation else (paths, [])
+
+
 def split_ink(page: fitz.Page) -> tuple[list[dict], list[dict]]:
     """(geometry paths, annotation paths) for one page.
 
     Annotation paths are returned rather than discarded: dimension lines and their
     leaders are what `scale.py` measures the sheet scale from.
-
-    Not every drawing follows the colour convention. Doc_HK3573 is wholly black and
-    separates its layers by stroke WIDTH instead (378 thin paths against 81 thick), the
-    other half of the ISO convention. Splitting on width was tried and measured: it did
-    not recover a single extra cutout there, and it cost recall elsewhere. So it is not
-    done. On such pages the later filters — the text penalty and the parent hierarchy —
-    carry the load, and some annotation artifacts survive as false positives. That is the
-    right trade: a false positive costs a click, a missed hole costs a part.
     """
     paths = page.get_drawings()
     geometry = [p for p in paths if classify_path(p) == GEOMETRY]
     annotation = [p for p in paths if classify_path(p) == ANNOTATION]
+
+    # Does this page actually use the colour convention? Fill-only paths (arrowheads) are
+    # always annotation, and a stray coloured stroke proves nothing — Doc_HK3573 has
+    # exactly ONE, a highlight box, and it was enough to make this look like a
+    # colour-coded sheet and suppress the width fallback entirely.
+    strokes = [p for p in paths if p.get("color") is not None]
+    coloured = [p for p in strokes if classify_path(p) == ANNOTATION]
+    if strokes and len(coloured) < MIN_ANNOTATION_SHARE * len(strokes):
+        by_w = split_by_width([p for p in strokes if classify_path(p) != FRAME])
+        if by_w[1]:
+            return by_w
 
     # Fail safe: if the page follows no convention we recognise, do not silently throw
     # the drawing away. Treat everything that is not the frame as geometry.
