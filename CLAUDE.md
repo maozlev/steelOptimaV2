@@ -15,11 +15,13 @@ know. No hedging, no flattery, no "great question". Disagreement is more useful 
 `.claude/settings.local.json`. Just do the work. Still confirm before genuinely destructive or
 outward-facing actions (history rewrites, force-push, deleting data, anything public).
 
-**Be a smart lazy developer.** Smallest change that actually works. Reuse what's already there
-before writing anything new — this codebase already has `listDocumentCutouts`, a server-side
-overlay renderer, and a `notch` enum that nothing calls, so check before you build. Don't
-gold-plate, don't add abstraction for one caller, don't write a framework when a function does.
-Laziness is about *output*, not *rigor*: still read the code, still run the tests.
+**Be a smart lazy developer.** The [ponytail](https://github.com/DietrichGebert/ponytail) plugin
+is enabled for this repo (`.claude/settings.json`) and enforces the decision ladder: does it need
+to exist → already in the codebase → stdlib → native platform → existing dependency → one-liner →
+only then write something new. Follow it. This codebase in particular already has
+`listDocumentCutouts`, a server-side overlay renderer, and a `notch` enum that nothing calls —
+check before you build. Laziness is about *output*, not *rigor*: still read the code, still run
+the tests.
 
 **End of every session: commit and push.** Real commit message describing what actually changed
 and why. `git push` to `origin main`. Don't leave work uncommitted.
