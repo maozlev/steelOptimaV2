@@ -192,16 +192,28 @@ def _process_table(
             for c in range(grid.n_cols)
         ]
 
+    first_texts = _grid_row_texts(0)
+    last_texts = _grid_row_texts(grid.n_rows - 1)
     heuristic = classify_heuristic(
         [
-            ("top", 1, _grid_row_texts(0)),
-            ("bottom", 1, _grid_row_texts(grid.n_rows - 1)),
+            ("top", 1, first_texts),
+            ("bottom", 1, last_texts),
             ("top", 0, _strip_texts(above=True)),
             ("bottom", 0, _strip_texts(above=False)),
         ]
     )
     if cls is None:
         cls = heuristic
+    elif cls.header_rows > 0:
+        # deterministic cross-check on the VLM's header claim: the NCD BOM prints
+        # its header BELOW and OUTSIDE the grid, and a model looking at the padded
+        # crop can't tell. A real header row is words; a data row is numbers —
+        # if the claimed header row is mostly numeric, the header isn't in the grid
+        claimed = first_texts if cls.header_position == "top" else last_texts
+        filled = [t for t in claimed if t.strip()]
+        numeric = sum(1 for t in filled if parse_number(t) is not None)
+        if filled and numeric / len(filled) > 0.5:
+            cls.header_rows = 0
 
     data_rows = data_row_indices(grid, cls)
     header_rows = grid.n_rows - len(data_rows)
