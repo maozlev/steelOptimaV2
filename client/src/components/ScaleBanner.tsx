@@ -32,6 +32,7 @@ export default function ScaleBanner({
   onSetScale: (pageId: number, scale: number) => void;
 }) {
   const [entry, setEntry] = useState<Record<number, string>>({});
+  const [overriding, setOverriding] = useState(false);
 
   // pre-fill each page with what the drawing appears to say
   useEffect(() => {
@@ -61,16 +62,53 @@ export default function ScaleBanner({
     );
   }
 
+  // Confirmed — either the drawing proved its own scale, or the operator set it. Shown,
+  // not demanded: it stays editable, because the operator owns the number.
   if (unconfirmed.length === 0 && disagreeing.length === 0) {
-    const s = scale.pages[0]?.scale;
+    const p = scale.pages[0];
+    const s = p?.scale;
     return (
       <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900/60 px-4 py-1.5 text-xs">
         <span className="text-emerald-400">✓</span>
         <span className="text-zinc-400">
           Scale{" "}
-          <span className="font-medium text-zinc-200">{s ? formatScale(s) : "—"}</span>{" "}
-          confirmed. Sizes are real mm.
+          <span className="font-medium text-zinc-200">{s ? formatScale(s) : "—"}</span>
+          {p?.note ? ` — ${p.note}` : ""}. Sizes are real mm.
         </span>
+        {!locked && (
+          <button
+            onClick={() => setOverriding(true)}
+            className="ml-1 text-zinc-500 underline hover:text-zinc-300"
+          >
+            change
+          </button>
+        )}
+        {overriding && !locked && (
+          <span className="flex items-center gap-1">
+            <span className="text-zinc-500">1:</span>
+            <input
+              type="number"
+              step="any"
+              min="0"
+              autoFocus
+              value={entry[p.page_id] ?? ""}
+              onChange={(e) =>
+                setEntry((prev) => ({ ...prev, [p.page_id]: e.target.value }))
+              }
+              className="w-20 rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5"
+            />
+            <button
+              disabled={busy || !Number(entry[p.page_id])}
+              onClick={() => {
+                onSetScale(p.page_id, Number(entry[p.page_id]));
+                setOverriding(false);
+              }}
+              className="rounded bg-zinc-700 px-2 py-0.5 hover:bg-zinc-600 disabled:opacity-40"
+            >
+              Apply
+            </button>
+          </span>
+        )}
       </div>
     );
   }

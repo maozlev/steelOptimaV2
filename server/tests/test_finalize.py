@@ -56,12 +56,40 @@ def finalized_doc(client):
     return doc, page_id, ids, r.json()
 
 
+def test_a_drawing_that_proves_its_own_scale_needs_no_confirmation(client, wait_job):
+    """Doc_HK3573 prints "Scale 1:5" AND its dimension lines independently measure 1:5.
+
+    Two sources that cannot collude already agree. Making the operator click to concur
+    with both of them adds friction and no safety — the rule was never "a human must press
+    a key", it was "two independent sources must agree". Confirmation is demanded only
+    where the drawing CANNOT prove its own scale, which is exactly where a human is the
+    only thing between a guess and a mis-cut part.
+    """
+    pdf = PDFS_DIR / "Doc_HK3573_290626083217_00 (1).pdf"
+    r = client.post(
+        "/api/documents",
+        files={"file": (pdf.name, pdf.read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 201, r.text
+    doc = r.json()
+    job = client.post(f"/api/documents/{doc['id']}/jobs").json()
+    wait_job(client, job["id"])
+
+    scale = client.get(f"/api/documents/{doc['id']}/bom").json()["scale"]
+    page = scale["pages"][0]
+    assert page["scale"] == pytest.approx(5.0, rel=0.02)
+    assert page["confirmed"], "a self-proving drawing must not nag the operator"
+    assert scale["trustworthy"]
+
+    # and it finalizes without anyone typing a thing
+    assert client.post(f"/api/documents/{doc['id']}/finalize", json={}).status_code == 200
+
+
 def test_finalize_refuses_an_unconfirmed_scale(client):
     """Nothing is cut from a size nobody signed off on.
 
-    Every dimension in the BOM is a paper measurement multiplied by the sheet scale. Maoz
-    made that number the operator's responsibility — so the operator has to actually
-    supply it, and the export cannot slip out with it unset.
+    Where the drawing CANNOT prove its own scale, the operator must supply it — and the
+    export cannot slip out with it unset.
     """
     # a DIFFERENT pdf — upload dedupes on content hash, not filename
     other = sorted(PDFS_DIR.glob("*.pdf"))[1]

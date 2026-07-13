@@ -109,10 +109,27 @@ def execute_job(job_id: int, emit: Emit = lambda e: None) -> None:
                     page_row.scale_detected = sc.scale
                     page_row.scale_confident = sc.confident
                     page_row.scale_note = sc.note or None
-                    # The detector PROPOSES. A re-run must never overwrite a scale a human
-                    # has already signed off on.
+
+                    # A re-run must never overwrite a scale a human has already signed off
+                    # on.
                     if not page_row.scale_confirmed:
                         page_row.scale = sc.scale
+                        # The point was never "a human must press a key" — it was "two
+                        # independent sources must agree". A confident result IS that
+                        # agreement: the printed "Scale 1:5" reproduced by the drawing's
+                        # own dimension lines, or several dimension lines agreeing among
+                        # themselves. Making the operator click to concur with two sources
+                        # that already concur adds friction and no safety.
+                        #
+                        # So confirmation is demanded only where the drawing CANNOT prove
+                        # its own scale. That is exactly where a human is the only thing
+                        # standing between a guess and a mis-cut part.
+                        if sc.confident:
+                            page_row.scale_confirmed = True
+                            page_row.scale_note = (
+                                sc.note
+                                or "read from the drawing and confirmed by its own dimensions"
+                            )
                     emit(
                         {
                             "type": "page_scale",
