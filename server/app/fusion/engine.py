@@ -24,3 +24,32 @@ def fuse_verdict(
     # could only call freeform
     kind = verdict.kind if cv_kind == "freeform" else cv_kind
     return kind, round(min(max(fused, 0.0), MAX_CONFIDENCE), 4)
+
+
+# A vetoed cutout lands here: below the finalize threshold, so it will not be approved
+# without a human looking at it, but nowhere near zero — it stays plainly visible in the
+# review UI as "under review" and one click restores it.
+VETO_CONFIDENCE = 0.50
+
+
+def fuse_verification(cv_score: float, verdict: VlmVerdict) -> float:
+    """Fuse a verdict on a candidate the CV pipeline is already CONFIDENT about.
+
+    Asymmetric on purpose, in both directions.
+
+    A confirmation must not MOVE the score at all. Averaging in the model's own
+    confidence would demote a real hole the moment the model was merely 0.6 sure of
+    something it got right: a confident CV detection plus a correct VLM agreement comes
+    out at 0.89 and falls under the 0.90 finalize threshold. The model is here to object,
+    not to grade.
+
+    A rejection FLAGS, it does not delete. This model is not trustworthy enough to be
+    given a delete key: asked about Doc_HK3573 it vetoed the real Ø605 bore with
+    confidence 1.0. So a veto demotes the cutout to VETO_CONFIDENCE — below finalize, so
+    nothing wrong is auto-approved, but visible and one click from being restored. Maoz's
+    rule is that a false positive costs a click and a missed hole costs a part; a model
+    that can silently erase a real hole gets that exactly backwards.
+    """
+    if not verdict.is_cutout or verdict.kind == "not_cutout":
+        return round(min(cv_score, VETO_CONFIDENCE), 4)
+    return cv_score

@@ -100,7 +100,7 @@ def test_select_caps_per_page(monkeypatch):
 def mock_vlm(monkeypatch):
     calls = []
 
-    def fake_classify(self, crop_png: bytes) -> VlmResult:
+    def fake_classify(self, crop_png: bytes, prompt: str | None = None) -> VlmResult:
         calls.append(len(crop_png))
         return VlmResult(
             verdict=VlmVerdict(is_cutout=True, kind="hole", confidence=0.9),
@@ -140,19 +140,41 @@ def test_vlm_escalation_pipeline(client, wait_job, mock_vlm):
 
     with db_session.SessionLocal() as db:
         vlm_calls = db.query(VlmCall).filter_by(job_id=job["id"]).all()
-        assert len(vlm_calls) == len(mock_vlm)
-        assert 0 < len(vlm_calls) <= settings.vlm_max_calls_per_page
+        assert len(vlm_calls) == len(mock_vlm), (
+            f"{len(mock_vlm)} calls made but {len(vlm_calls)} audit rows written"
+        )
         assert all(c.ok for c in vlm_calls)
-        assert all(c.trigger == "low_confidence" for c in vlm_calls)
         assert all(Path(c.crop_path).exists() for c in vlm_calls)
+
+        # two passes now: RESCUE the doubtful, and VETO the confident. The confident ones
+        # are where the errors the operator actually sees live — a GD&T frame scores 0.98,
+        # and escalation would never have shown it to the model at all.
+        by_trigger = {c.trigger for c in vlm_calls}
+        assert "low_confidence" in by_trigger
+        assert "verification" in by_trigger
+
+        escalated = [c for c in vlm_calls if c.trigger == "low_confidence"]
+        assert 0 < len(escalated) <= settings.vlm_max_calls_per_page
+
+        # verification is grouped: one question per distinct shape+size, not per cutout
+        verified = [c for c in vlm_calls if c.trigger == "verification"]
+        approved = db.query(Cutout).filter(
+            Cutout.page_id.in_([p["id"] for p in doc["pages"]]),
+            Cutout.confidence >= settings.finalize_threshold,
+        ).count()
+        assert 0 < len(verified) < approved, "identical holes must share one call"
 
         fused = (
             db.query(Cutout)
             .filter_by(job_id=job["id"], source="fused")
             .all()
         )
-        assert len(fused) == len(vlm_calls)
-        # accepted-as-hole verdicts must not lower confidence below the ceiling logic
+        # Only the ESCALATED cutouts are fused. A verification that CONFIRMS deliberately
+        # changes nothing: averaging the model's own confidence in would demote a real
+        # hole for the crime of the model being only 60% sure of something it got right.
+        # The model objects; it does not grade. (This mock always confirms, so the veto
+        # path writes nothing here — see test_verify.py for that.)
+        assert len(fused) == len(escalated)
         assert all(c.confidence <= 0.98 for c in fused)
 
 

@@ -204,6 +204,13 @@ def _dedupe(shells: list[tuple[Polygon, bool]]) -> list[tuple[Polygon, bool]]:
     return kept
 
 
+# Tried and rejected: gating candidates on "must lie inside a part outline", where a part
+# outline is a top-level closed loop. It does not work. The title-block symbols ARE closed
+# loops with nothing around them, so they qualify as parts and admit themselves; and on
+# 12562 it dropped a real slot, taking recall from 93% to 86%. A filter that loses real
+# holes to catch three symbols is the wrong trade. Left here so nobody rebuilds it.
+
+
 def ideal_obround(mrr: Polygon, length: float, width: float) -> Polygon | None:
     """The stadium that would exactly fill this oriented bounding box.
 

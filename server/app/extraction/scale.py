@@ -33,6 +33,10 @@ from app.extraction.vector import PT_TO_MM, Candidate, _item_points
 
 # "Scale 1:5", "SCALE:2:1", "Scale 1:3.5"
 SCALE_TEXT = re.compile(r"scale\s*:?\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)", re.I)
+# a bare "1:5" token, to be matched to a nearby "Scale" label by position
+RATIO_TOKEN = re.compile(r"^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$")
+# how far from the word "Scale" its value may sit, in page points
+SCALE_LABEL_REACH_PT = 90.0
 
 # A dimension label: an optional diameter mark, then a number. The diameter glyph is
 # frequently not text at all (it is drawn as vector paths) and some exporters mangle it
@@ -73,13 +77,39 @@ class ScaleResult:
 
 
 def parse_scale_text(page: fitz.Page) -> list[float]:
-    """Every "N:M" printed on the sheet, as real/paper ratios. Several usually means
-    the sheet and its title block contradict each other."""
+    """Every "N:M" printed on the sheet, as real/paper ratios.
+
+    Matched SPATIALLY, not by regex over the flattened text. In Doc_HK3573's title block
+    the word "Scale" is token 10 and its value "1:5" is token 99 — adjacent on the page,
+    nowhere near each other in the PDF's text stream. Reading the text as one string, the
+    drawing appeared to print no scale at all, and the resolver fell back to an
+    unconfident guess of 3.149 for a sheet that says 1:5 in plain sight.
+
+    Several results usually means the sheet and its title block contradict each other.
+    """
     out = []
     for num, den in SCALE_TEXT.findall(page.get_text()):
         n, d = float(num), float(den)
         if n and d:
             out.append(d / n)  # "1:5" -> one of paper is five of reality
+
+    # a bare "N:M" token sitting beside the word "Scale"
+    words = page.get_text("words")
+    labels = [w for w in words if w[4].strip().lower().startswith("scale")]
+    for x0, y0, x1, y1, text, *_ in words:
+        m = RATIO_TOKEN.match(text.strip())
+        if not m:
+            continue
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        near = any(
+            abs(cx - (lx0 + lx1) / 2) <= SCALE_LABEL_REACH_PT
+            and abs(cy - (ly0 + ly1) / 2) <= SCALE_LABEL_REACH_PT
+            for lx0, ly0, lx1, ly1, *_ in labels
+        )
+        if near:
+            n, d = float(m.group(1)), float(m.group(2))
+            if n and d:
+                out.append(d / n)
     return out
 
 

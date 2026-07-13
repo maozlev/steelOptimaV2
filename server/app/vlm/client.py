@@ -53,15 +53,16 @@ class OllamaVlmClient:
             for m in models
         )
 
-    def classify_crop(self, crop_png: bytes) -> VlmResult:
-        prompt_hash = hashlib.sha256(CLASSIFY_CROP_PROMPT.encode()).hexdigest()[:16]
+    def classify_crop(self, crop_png: bytes, prompt: str | None = None) -> VlmResult:
+        prompt = prompt or CLASSIFY_CROP_PROMPT
+        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
         payload = {
             "model": self.model,
             "think": False,
             "messages": [
                 {
                     "role": "user",
-                    "content": CLASSIFY_CROP_PROMPT,
+                    "content": prompt,
                     "images": [base64.b64encode(crop_png).decode()],
                 }
             ],

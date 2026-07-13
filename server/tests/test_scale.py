@@ -18,7 +18,20 @@ CASES = [
     ("12562-3000F501023_03.pdf", 0.5, 16.0),  # MAGNIFIED 2:1 sheet
     ("333-532-294_2_BLANK.pdf", 3.0, 75.0),  # washer, Ø75 THRU
     ("ASH-071222-TW550-M10_BLANK.pdf", 3.5, 290.0),  # gear, Ø290 THRU
+    ("Doc_HK3573_290626083217_00 (1).pdf", 5.0, 605.0),  # gasket, Ø605 bore
 ]
+
+
+def test_a_title_block_scale_is_read_by_position_not_by_regex():
+    """Doc_HK3573 prints "Scale 1:5" in its title block, and we could not see it.
+
+    In the PDF's text stream the word "Scale" is token 10 and its value "1:5" is token 99
+    — adjacent on the page, nowhere near each other in reading order. A regex over the
+    flattened text therefore found nothing, the drawing looked unscaled, and the resolver
+    fell back to an unconfident guess of 3.149 for a sheet that says 1:5 in plain sight.
+    """
+    page = fitz.open(PDFS_DIR / "Doc_HK3573_290626083217_00 (1).pdf")[0]
+    assert 5.0 in parse_scale_text(page)
 
 
 def _resolve(name):

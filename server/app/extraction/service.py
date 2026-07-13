@@ -18,6 +18,7 @@ from app.extraction.vector import Candidate, extract_candidates
 from app.telemetry import tracker
 from app.vlm.client import OllamaVlmClient
 from app.vlm.escalation import escalate_page
+from app.vlm.verify import verify_page
 
 Emit = Callable[[dict], None]
 
@@ -141,9 +142,16 @@ def execute_job(job_id: int, emit: Emit = lambda e: None) -> None:
                     db.flush()
                     vlm_calls = 0
                     if client is not None:
+                        # rescue: review what the pipeline is UNSURE of
                         vlm_calls = escalate_page(
                             db, job.id, page_row, rows, cands, scores, emit, client
                         )
+                        # veto: review what it is CONFIDENT of. That is where the errors
+                        # the operator actually sees live — a GD&T frame scores 0.98.
+                        if settings.vlm_verify:
+                            vlm_calls += verify_page(
+                                db, job.id, page_row, rows, cands, scores, emit, client
+                            )
                     tracker.emit(
                         db,
                         "page_done",

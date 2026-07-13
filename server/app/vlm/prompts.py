@@ -34,3 +34,34 @@ CLASSIFY_CROP_PROMPT = (
     'Respond ONLY with JSON: {"is_cutout": <bool>, '
     '"kind": "<hole|slot|notch|freeform|not_cutout>", "confidence": <0..1>}'
 )
+
+# The CV pipeline is CONFIDENT about these — and that is exactly the problem. A GD&T
+# feature-control frame is a circle and a square; a boxed dimension callout is a perfect
+# rectangle. Geometry cannot tell them from a hole and a slot, because geometrically they
+# ARE a hole and a slot. Only a reader who understands what a drawing MEANS can separate
+# them, which is the one thing a vision model is genuinely better at than any rule.
+#
+# The crop carries generous surroundings on purpose: whether a circle is a hole depends
+# entirely on whether it sits in the metal or in the margin.
+VERIFY_CROP_PROMPT = (
+    "This is a region of a steel fabrication drawing. A CV pipeline believes the shape "
+    "marked by the RED outline is a manufacturing cutout — a hole or slot that will be "
+    "physically cut out of the steel plate. Your job is to catch it when it is wrong.\n\n"
+    "Answer one question: would a machinist actually CUT this shape out of the metal?\n\n"
+    "It IS a cutout if it is a hole, slot, notch or opening drawn on the part itself — "
+    "part of the physical geometry of the steel.\n\n"
+    "It is NOT a cutout (kind = not_cutout) if it is any of the following, no matter how "
+    "circular or rectangular it looks:\n"
+    "- a GD&T / feature-control frame (a boxed row of symbols such as ⊕, ⌀, ▱, often with "
+    "a datum letter or number)\n"
+    "- a datum target, datum symbol or the circled letter/number beside one\n"
+    "- a boxed or framed dimension callout (a number in a rectangle)\n"
+    "- a title-block cell, a revision balloon, a section or detail marker\n"
+    "- a leader line, arrowhead, centre-line, hatching, or a printed character\n"
+    "- anything drawn in the margin or beside the part rather than on it\n\n"
+    "A drawing SYMBOL is drawn on the paper. A CUTOUT is drawn on the metal. If the shape "
+    "sits outside the body of the part, it is not a cutout.\n\n"
+    "Be decisive. If it is a symbol or annotation, say so.\n"
+    'Respond ONLY with JSON: {"is_cutout": <bool>, '
+    '"kind": "<hole|slot|notch|freeform|not_cutout>", "confidence": <0..1>}'
+)
