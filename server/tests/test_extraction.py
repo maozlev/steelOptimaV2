@@ -59,9 +59,23 @@ def test_freeform_scores_below_escalation_threshold():
     assert score_candidate(c) < VLM_ESCALATION_THRESHOLD
 
 
-def test_text_penalty_pushes_below_threshold():
-    c = _candidate(box(0, 0, 40, 10), contains_text=True)
+def test_text_penalty_pushes_annotation_box_below_threshold():
+    """An annotation box is a freeform face that exists to hold text."""
+    l_shape = Polygon([(0, 0), (30, 0), (30, 10), (10, 10), (10, 30), (0, 30)])
+    c = _candidate(l_shape, contains_text=True)
     assert score_candidate(c) < VLM_ESCALATION_THRESHOLD
+
+
+def test_text_inside_a_real_bore_is_not_penalised():
+    """A dimension label sitting inside a large bore is ordinary CAD practice.
+
+    Penalising it multiplied ASH-071222's only real hole (the Ø290 bore, whose own
+    "Ø290 THRU" label sits inside it) by 0.4 and auto-rejected it, while a Ø glyph
+    elsewhere on the sheet was auto-approved as a hole. Regression guard.
+    """
+    bore = _candidate(Point(0, 0).buffer(120, quad_segs=32), from_loop=True)
+    bore.contains_text = True
+    assert score_candidate(bore) > VLM_ESCALATION_THRESHOLD
 
 
 def test_score_bounds():

@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from shapely.geometry import Point
 
-from app.extraction.vector import Candidate
+from app.extraction.vector import TEXT_BOX_MAX_SPAN_PT, Candidate
 
 TILE_PX = 1280
 TILE_OVERLAP_PX = 64
@@ -143,7 +143,12 @@ def annotate_candidates(candidates: list[Candidate], words: list[OcrWord]) -> No
     for c in candidates:
         b = c.polygon.bounds
         box_area = (b[2] - b[0]) * (b[3] - b[1])
-        if not c.contains_text:
+        # Only a text-SIZED shape can be an annotation box. The old rule flagged any
+        # candidate holding a word that covered <50% of it — which is also exactly what
+        # a large bore with its own "Ø290 THRU" label looks like, so the real hole was
+        # penalised into auto-rejection. See TEXT_BOX_MAX_SPAN_PT in vector.py.
+        text_sized = min(b[2] - b[0], b[3] - b[1]) <= TEXT_BOX_MAX_SPAN_PT
+        if not c.contains_text and text_sized:
             c.contains_text = any(
                 b[0] <= word.center[0] <= b[2]
                 and b[1] <= word.center[1] <= b[3]

@@ -54,8 +54,11 @@ def score_candidate(c: Candidate, dimension_agreement: bool | None = None) -> fl
         # measured vs annotated mismatch is a VLM escalation trigger
         score -= DIMENSION_CONFLICT_PENALTY
 
-    # text inside a closed shape usually means an annotation box, not a cutout
-    if c.contains_text:
+    # Text inside a closed shape suggests an annotation box — but only if the shape is
+    # not already a clean circle/slot/rectangle. A dimension label routinely sits inside
+    # a real bore or slot, and penalising those rejected the only true hole on ASH-071222
+    # and one of Doc_HK3573's slots. An annotation box, by contrast, is a freeform face.
+    if c.contains_text and c.kind == "freeform":
         score *= TEXT_PENALTY_FACTOR
 
     return round(min(max(score, 0.0), MAX_CONFIDENCE), 4)

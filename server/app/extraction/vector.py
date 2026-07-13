@@ -5,6 +5,8 @@ import fitz
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import polygonize, unary_union
 
+from app.extraction.ink import split_ink
+
 BEZIER_SAMPLES = 8
 SNAP_DECIMALS = 2
 # a polygon covering this much of the page is the drawing frame, not a part
@@ -13,6 +15,15 @@ MIN_CUTOUT_AREA_PT2 = 4.0
 MAX_CUTOUT_PARENT_RATIO = 0.6
 CIRCLE_FIT_THRESHOLD = 0.90
 RECT_FIT_THRESHOLD = 0.95
+# A rectangle fills its bounding box (1.00); an obround fills 1 - 0.2146*(W/L), which
+# bottoms out at 0.785 as W approaches L. Anything at or above that is a rectangle or a
+# slot; below it the shape resembles neither. The old 0.95 gate admitted only skinny
+# slots and dropped fat ones into "freeform", where the penalty auto-rejected them.
+SLOT_FIT_THRESHOLD = 0.85
+# An annotation box is roughly text-sized: a title-block cell or a dimension frame is
+# ~10-40pt across. A bore with its own label inside it is far bigger (ASH's Ø290 bore
+# is 234pt), and must not be mistaken for a box that exists to hold text.
+TEXT_BOX_MAX_SPAN_PT = 40.0
 # concentric double-strokes (hole + countersink/centermark circle) yield
 # IoU = A_inner/A_outer ~ 0.45-0.9; distinct real cutouts never overlap
 DUPLICATE_IOU = 0.40
@@ -86,7 +97,7 @@ def _is_construction(path: dict) -> bool:
     return path.get("type") == "f" or _is_dashed(path)
 
 
-def _path_loops(page: fitz.Page) -> list[Polygon]:
+def _path_loops(page: fitz.Page, paths: list[dict]) -> list[Polygon]:
     """Closed loops recovered per path.
 
     CAD exports often draw a circle/contour as one polyline path that does not
@@ -97,7 +108,7 @@ def _path_loops(page: fitz.Page) -> list[Polygon]:
     # get_drawings() coords are in unrotated page space; renders/text are in
     # rotated space — rotation_matrix maps the former to the latter
     m = page.rotation_matrix
-    for path in page.get_drawings():
+    for path in paths:
         if _is_construction(path):
             continue
         chains: list[list[tuple[float, float]]] = []
@@ -132,10 +143,10 @@ def _path_loops(page: fitz.Page) -> list[Polygon]:
     return loops
 
 
-def _segments(page: fitz.Page) -> list[LineString]:
+def _segments(page: fitz.Page, paths: list[dict]) -> list[LineString]:
     segs = []
     m = page.rotation_matrix
-    for path in page.get_drawings():
+    for path in paths:
         # dashed/fill-only paths are construction geometry and annotation
         # solids; they fragment real contours in the planar arrangement
         if _is_construction(path):
@@ -173,6 +184,43 @@ def _dedupe(shells: list[tuple[Polygon, bool]]) -> list[tuple[Polygon, bool]]:
     return kept
 
 
+def ideal_obround(mrr: Polygon, length: float, width: float) -> Polygon | None:
+    """The stadium that would exactly fill this oriented bounding box.
+
+    A capsule of overall length L and width W is a segment of length (L - W) buffered
+    by W/2 along the box's long axis.
+    """
+    if length <= width:
+        return None
+    c = list(mrr.exterior.coords)[:4]
+    a = LineString([c[0], c[1]]).length
+    # midpoints of the two SHORT edges give the long axis
+    if a >= LineString([c[1], c[2]]).length:
+        m0 = LineString([c[1], c[2]]).interpolate(0.5, normalized=True)
+        m1 = LineString([c[3], c[0]]).interpolate(0.5, normalized=True)
+    else:
+        m0 = LineString([c[0], c[1]]).interpolate(0.5, normalized=True)
+        m1 = LineString([c[2], c[3]]).interpolate(0.5, normalized=True)
+    axis = LineString([m0, m1])
+    if axis.length <= width:
+        return None
+    spine = LineString(
+        [axis.interpolate(width / 2), axis.interpolate(axis.length - width / 2)]
+    )
+    return spine.buffer(width / 2)
+
+
+def _shape_fit(poly: Polygon, ideal: Polygon | None) -> float:
+    """Intersection-over-union against an ideal shape."""
+    if ideal is None or ideal.is_empty:
+        return 0.0
+    try:
+        union = poly.union(ideal).area
+        return poly.intersection(ideal).area / union if union else 0.0
+    except Exception:
+        return 0.0
+
+
 def _classify(poly: Polygon) -> tuple[str, float, dict]:
     area = poly.area
     perimeter = poly.exterior.length
@@ -184,16 +232,28 @@ def _classify(poly: Polygon) -> tuple[str, float, dict]:
         return "hole", circularity, dims
 
     mrr = poly.minimum_rotated_rectangle
-    rect_fit = area / mrr.area if isinstance(mrr, Polygon) and mrr.area else 0.0
-    if rect_fit >= RECT_FIT_THRESHOLD:
+    if isinstance(mrr, Polygon) and mrr.area:
         coords = list(mrr.exterior.coords)
         side_a = LineString(coords[0:2]).length
         side_b = LineString(coords[1:3]).length
-        dims = {
-            "length_mm": round(max(side_a, side_b) * PT_TO_MM, 2),
-            "width_mm": round(min(side_a, side_b) * PT_TO_MM, 2),
-        }
-        return "slot", rect_fit, dims
+        length, width = max(side_a, side_b), min(side_a, side_b)
+
+        # Compare against the ideal shapes themselves, not merely their areas: an
+        # arbitrary blob can share an obround's area ratio without being one. The old
+        # gate (rect_fit >= 0.95) recognised only skinny slots — an obround fills
+        # 1 - 0.2146*(W/L) of its box, so a fat one (W/L ~ 0.46) reaches just 0.900 and
+        # fell through to "freeform", where the -0.3 penalty auto-rejected it.
+        rect_fit = area / mrr.area
+        obround_fit = _shape_fit(poly, ideal_obround(mrr, length, width))
+        fit = max(rect_fit, obround_fit)
+        if fit >= SLOT_FIT_THRESHOLD:
+            dims = {
+                "length_mm": round(length * PT_TO_MM, 2),
+                "width_mm": round(width * PT_TO_MM, 2),
+            }
+            return "slot", min(fit, 1.0), dims
+    else:
+        rect_fit = 0.0
 
     b = poly.bounds
     dims = {
@@ -244,7 +304,14 @@ def build_candidates(
             continue
         kind, shape_fit, dims = _classify(s)
         b = s.bounds
-        contains_text = any(
+        # contains_text marks an annotation BOX (a title-block cell, a dimension
+        # frame) — something whose whole purpose is to hold text. A dimension label
+        # sitting inside a large bore is ordinary CAD practice and must not be
+        # treated the same way: on ASH-071222 that mistake multiplied the Ø290 bore's
+        # score by 0.4 and auto-rejected the only real hole on the sheet. So only
+        # flag it when the shape is small enough that the text dominates it.
+        text_sized = min(b[2] - b[0], b[3] - b[1]) <= TEXT_BOX_MAX_SPAN_PT
+        contains_text = text_sized and any(
             b[0] <= cx <= b[2] and b[1] <= cy <= b[3] and s.contains(Point(cx, cy))
             for cx, cy in text_centers
         )
@@ -264,7 +331,10 @@ def build_candidates(
 
 
 def extract_candidates(page: fitz.Page) -> list[Candidate]:
-    segs = _segments(page)
+    # Only part-geometry ink is polygonized. Leader lines, dimension lines and glyph
+    # outlines are annotation and are never candidates — see extraction/ink.py.
+    geometry, _annotation = split_ink(page)
+    segs = _segments(page, geometry)
     if not segs:
         return []
 
@@ -278,5 +348,7 @@ def extract_candidates(page: fitz.Page) -> list[Candidate]:
         for p in polygonize(unary_union(segs))
         if p.is_valid and p.area >= MIN_CUTOUT_AREA_PT2
     ]
-    tagged = [(p, False) for p in faces] + [(p, True) for p in _path_loops(page)]
+    tagged = [(p, False) for p in faces] + [
+        (p, True) for p in _path_loops(page, geometry)
+    ]
     return build_candidates(tagged, abs(page.rect), text_centers)

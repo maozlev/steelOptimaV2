@@ -18,7 +18,9 @@ from shapely.geometry import LineString, Polygon
 from app.extraction.vector import (
     CIRCLE_FIT_THRESHOLD,
     PT_TO_MM,
-    RECT_FIT_THRESHOLD,
+    SLOT_FIT_THRESHOLD,
+    _shape_fit,
+    ideal_obround,
 )
 
 CIRCLE = "circle"
@@ -78,17 +80,21 @@ def shape_metrics(poly: Polygon, kind: str | None = None) -> dict:
     if sides is None:
         return fallback
     length, width = sides
-    area_mm = area_pt * PT_TO_MM**2
-    rect_area = length * width
-    if not rect_area or area_mm / rect_area < RECT_FIT_THRESHOLD:
+    mrr = poly.minimum_rotated_rectangle
+    if not mrr.area:
         return fallback
 
-    # An obround fills its bounding rectangle everywhere except the four corners
-    # the rounded ends cut away. Whichever ideal area the polygon lands nearer to
-    # is the shape it actually is.
-    obround_area = rect_area - (4 - math.pi) * (width / 2) ** 2
+    # Compare against the ideal shapes, not just their areas — a blob can share an
+    # obround's area ratio without being one. Whichever the polygon actually overlaps
+    # better is the shape it is.
+    rect_fit = area_pt / mrr.area
+    obround = ideal_obround(mrr, length / PT_TO_MM, width / PT_TO_MM)
+    obround_fit = _shape_fit(poly, obround)
+    if max(rect_fit, obround_fit) < SLOT_FIT_THRESHOLD:
+        return fallback
+
     dims = {"length_mm": round(length, 2), "width_mm": round(width, 2)}
-    if abs(area_mm - rect_area) <= abs(area_mm - obround_area):
+    if rect_fit >= obround_fit:
         return {
             "shape": RECTANGLE,
             "dims": dims,
