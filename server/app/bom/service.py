@@ -10,13 +10,37 @@ from app.db.models import Cutout
 ACCEPTED_STATUSES = ("approved", "edited")
 
 
-def cutout_metrics(c: Cutout) -> dict:
-    """Shape / dims / cut length for one cutout, from its effective geometry."""
+def cutout_metrics(c: Cutout, scale: float | None = None) -> dict:
+    """Shape / dims / cut length for one cutout, from its effective geometry.
+
+    `scale` converts paper millimetres to real ones (a 1:5 sheet is 5.0). Without it the
+    numbers are the size of the ink on the page, not the size of the part — the gear's
+    Ø290 bore measures Ø82.9 of paper. Callers that have a page MUST pass its scale.
+    """
     geom = shapely_wkt.loads(c.edited_geometry_wkt or c.geometry_wkt)
-    return shape_metrics(geom, c.kind)
+    m = shape_metrics(geom, c.kind)
+    if scale is None or scale == 1.0:
+        return m
+    return {
+        "shape": m["shape"],
+        "dims": {k: round(v * scale, 2) for k, v in m["dims"].items()},
+        "cut_length_mm": round(m["cut_length_mm"] * scale, 2),
+    }
 
 
-def build_rows(cutouts: list[Cutout]) -> list[dict]:
+def page_scales(db, cutouts: list[Cutout]) -> dict[int, float | None]:
+    """page_id -> scale, for every page these cutouts live on."""
+    from app.db.models import Page
+
+    page_ids = {c.page_id for c in cutouts}
+    if not page_ids:
+        return {}
+    return {
+        p.id: p.scale for p in db.query(Page).filter(Page.id.in_(page_ids)).all()
+    }
+
+
+def build_rows(cutouts: list[Cutout], scales: dict[int, float | None] | None = None) -> list[dict]:
     """One row per (shape, size). Quantity counts accepted cutouts only.
 
     Rows group on the snapped size but report the group's *mean* size, so the
@@ -24,7 +48,7 @@ def build_rows(cutouts: list[Cutout]) -> list[dict]:
     """
     rows: dict[str, dict] = {}
     for c in cutouts:
-        m = cutout_metrics(c)
+        m = cutout_metrics(c, (scales or {}).get(c.page_id))
         key = f"{m['shape']}|{dims_key(m['dims'])}"
         row = rows.setdefault(
             key,

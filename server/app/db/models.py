@@ -54,6 +54,14 @@ class Page(Base):
     render_path: Mapped[str] = mapped_column(String(1024))
     render_dpi: Mapped[int] = mapped_column(Integer)
 
+    # real_mm / paper_mm. A 1:5 sheet is 5.0; a 2:1 magnified sheet is 0.5. Null when it
+    # could not be established — dimensions are then paper mm and MUST NOT be trusted.
+    scale: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # True only when the drawing's own dimensions back it up. An unconfident scale is
+    # shown to the operator for confirmation, never used to finalize silently.
+    scale_confident: Mapped[bool] = mapped_column(Boolean, default=False)
+    scale_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     document: Mapped[Document] = relationship(back_populates="pages")
 
 

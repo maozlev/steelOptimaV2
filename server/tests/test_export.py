@@ -78,13 +78,16 @@ def test_export_only_accepted(client, reviewed):
 
 def test_export_uses_edited_geometry(client, reviewed):
     out = client.get(f"/api/documents/{reviewed['doc']['id']}/export").json()
+    page = out["pages"][0]
     by_id = {c["id"]: c for p in out["pages"] for c in p["cutouts"]}
     edited = by_id[reviewed["edited"]["id"]]
-    # 20pt x 10pt rectangle in mm
+    # a 20pt x 10pt rectangle, in REAL mm: paper mm times the sheet scale. The export
+    # used to emit paper mm, so a 1:5 drawing shipped parts a fifth of their true size.
+    scale = page["scale"] or 1.0
     xs = [p[0] for p in edited["points_mm"]]
     ys = [p[1] for p in edited["points_mm"]]
-    assert max(xs) == pytest.approx(20 * 25.4 / 72, abs=0.01)
-    assert max(ys) == pytest.approx(10 * 25.4 / 72, abs=0.01)
+    assert max(xs) == pytest.approx(20 * 25.4 / 72 * scale, rel=0.01)
+    assert max(ys) == pytest.approx(10 * 25.4 / 72 * scale, rel=0.01)
     assert edited["geometry_wkt_pt"] != reviewed["edited"]["geometry_wkt"]
 
     approved = by_id[reviewed["approved"]["id"]]

@@ -12,6 +12,7 @@ from app.db import session as db_session
 from app.db.models import Cutout, Document, ExtractionJob, VlmCall
 from app.extraction.ocr import OcrWord, annotate_candidates, ocr_words_near
 from app.extraction.raster import extract_raster_candidates
+from app.extraction.scale import resolve_scale
 from app.extraction.scoring import score_candidates
 from app.extraction.vector import Candidate, extract_candidates
 from app.telemetry import tracker
@@ -88,6 +89,25 @@ def execute_job(job_id: int, emit: Emit = lambda e: None) -> None:
                     )
                     cands = _page_candidates(pdf, page_row)
                     scores = score_candidates(cands)
+
+                    # Recover real-world scale. Until this existed every dimension in
+                    # the BOM was in PAPER mm: the gear's Ø290 bore was reported as
+                    # Ø82.9 because its sheet is 1:3.5. An unconfident result is stored
+                    # anyway but flagged, so the operator confirms it rather than the
+                    # system silently cutting a part at the wrong size.
+                    sc = resolve_scale(pdf[page_row.index], cands)
+                    page_row.scale = sc.scale
+                    page_row.scale_confident = sc.confident
+                    page_row.scale_note = sc.note or None
+                    emit(
+                        {
+                            "type": "page_scale",
+                            "page_index": page_row.index,
+                            "scale": sc.scale,
+                            "confident": sc.confident,
+                            "note": sc.note,
+                        }
+                    )
                     # a re-run replaces prior automatic detections; manual
                     # cutouts (job_id NULL) are user work and must survive
                     stale_ids = [

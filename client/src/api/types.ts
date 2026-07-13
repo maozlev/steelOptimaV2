@@ -120,14 +120,31 @@ export interface BomTotals {
   pending_qty: number;
 }
 
+/** Dimensions are measured in PAPER mm and multiplied by the sheet scale. Without a
+ *  verified scale the numbers are the size of ink on a page, not of a part. */
+export interface PageScale {
+  page_index: number;
+  page_id: number;
+  scale: number | null; // real_mm / paper_mm. 1:5 sheet -> 5.0; 2:1 -> 0.5
+  confident: boolean;
+  note: string | null;
+}
+
+export interface ScaleStatus {
+  pages: PageScale[];
+  trustworthy: boolean;
+}
+
 export interface DocumentBom {
   document: { id: number; filename: string; status: string };
+  scale: ScaleStatus;
   rows: BomRow[];
   totals: BomTotals;
 }
 
 export interface AggregateBom {
   documents: { id: number; filename: string }[];
+  untrusted_scale: string[];
   rows: BomRow[];
   totals: BomTotals;
 }

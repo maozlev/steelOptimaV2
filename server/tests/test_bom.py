@@ -29,8 +29,9 @@ def obround(length_mm: float, width_mm: float) -> Polygon:
 class FakeCutout:
     """Stands in for a Cutout row: build_rows only touches these fields."""
 
-    def __init__(self, poly, cid=1, status="approved", kind="hole"):
+    def __init__(self, poly, cid=1, status="approved", kind="hole", page_id=1):
         self.id = cid
+        self.page_id = page_id
         self.status = status
         self.kind = kind
         self.geometry_wkt = poly.wkt
@@ -134,6 +135,35 @@ def test_pending_quantity_is_tracked_separately():
     ]
     rows = build_rows(cutouts)
     assert rows[0]["qty"] == 2 and rows[0]["pending_qty"] == 1
+
+
+def test_the_sheet_scale_reaches_the_bom():
+    """A Ø47 circle of ink on a 1:5 sheet is a Ø235 hole in the steel.
+
+    Without this the gear's Ø290 bore was reported as Ø82.9 and its cut length was 3.5x
+    short — numbers that would be cut, not merely displayed.
+    """
+    unscaled = build_rows([FakeCutout(circle(47.0), page_id=7)])
+    scaled = build_rows([FakeCutout(circle(47.0), page_id=7)], scales={7: 5.0})
+
+    assert scaled[0]["cut_length_each_mm"] == pytest.approx(
+        5 * unscaled[0]["cut_length_each_mm"], rel=0.001
+    )
+    assert scaled[0]["cut_length_each_mm"] == pytest.approx(math.pi * 235.0, rel=0.02)
+
+
+def test_a_magnified_sheet_scales_dimensions_down():
+    """12562 is Scale 2:1: 32mm of ink is a 16mm slot. Dividing the wrong way here would
+    double the error instead of fixing it."""
+    rows = build_rows([FakeCutout(circle(32.0), page_id=3)], scales={3: 0.5})
+    assert rows[0]["cut_length_each_mm"] == pytest.approx(math.pi * 16.0, rel=0.02)
+
+
+def test_no_scale_leaves_paper_dimensions_untouched():
+    """A page whose scale could not be established must not be silently multiplied by
+    anything — the numbers stay as measured and the API flags them as unverified."""
+    rows = build_rows([FakeCutout(circle(10.0), page_id=1)], scales={1: None})
+    assert rows[0]["cut_length_each_mm"] == pytest.approx(math.pi * 10.0, rel=0.02)
 
 
 def test_totals_sum_every_row():

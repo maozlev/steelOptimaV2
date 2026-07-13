@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import bom, cutouts, documents, export, health, jobs, telemetry
 from app.config import settings
 from app.db import session as db_session
+from app.db.migrate import add_missing_columns
 from app.db.models import Base, ExtractionJob
 from app.workers.queue import worker
 from app.ws import events
@@ -25,6 +26,9 @@ def _fail_orphaned_jobs() -> None:
 async def lifespan(_app: FastAPI):
     settings.ensure_dirs()
     Base.metadata.create_all(db_session.engine)
+    # new columns on existing tables — so a schema change never means wiping the
+    # operator's database and re-reviewing every drawing
+    add_missing_columns(db_session.engine, Base)
     _fail_orphaned_jobs()
     events.broker.reset()
     worker.start()

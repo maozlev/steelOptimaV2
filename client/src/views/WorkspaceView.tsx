@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import { addToSummaryIncludes } from "../api/bom";
 import type {
   BomRow,
+  ScaleStatus,
   CutoutKind,
   CutoutOut,
   DocumentDetailOut,
@@ -11,6 +12,7 @@ import { useJobEvents } from "../api/ws";
 import { polygonToWkt, rectToWkt } from "../api/wkt";
 import { sessionId, track } from "../telemetry";
 import BomPanel from "../components/BomPanel";
+import ScaleBanner from "../components/ScaleBanner";
 import CutoutDetail from "../components/CutoutDetail";
 import CutoutSidebar, { ALL_STATUSES, type Filters } from "../components/CutoutSidebar";
 import JobProgress from "../components/JobProgress";
@@ -35,6 +37,7 @@ export default function WorkspaceView({
   // finalize preview cover the whole document, so they need all of them.
   const [cutouts, setCutouts] = useState<CutoutOut[]>([]);
   const [bomRows, setBomRows] = useState<BomRow[]>([]);
+  const [scale, setScale] = useState<ScaleStatus>({ pages: [], trustworthy: true });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [filters, setFilters] = useState<Filters>({
     statuses: new Set(ALL_STATUSES),
@@ -66,7 +69,10 @@ export default function WorkspaceView({
     api.listDocumentCutouts(docId).then(setCutouts).catch(() => {});
     api
       .getDocumentBom(docId)
-      .then((b) => setBomRows(b.rows))
+      .then((b) => {
+        setBomRows(b.rows);
+        setScale(b.scale);
+      })
       .catch(() => {});
   }, [docId]);
 
@@ -351,6 +357,25 @@ export default function WorkspaceView({
       </header>
 
       <JobProgress events={events} pageCount={doc.page_count} />
+      {scale.pages.length > 0 && (
+        <ScaleBanner
+          scale={scale}
+          locked={locked}
+          busy={busy}
+          onSetScale={async (pageId, value) => {
+            setBusy(true);
+            setError(null);
+            try {
+              await api.setPageScale(pageId, value, sessionId);
+              refetch();
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      )}
       {error && (
         <div className="border-b border-red-900 bg-red-950/60 px-4 py-1.5 text-xs text-red-300">
           {error}

@@ -10,6 +10,7 @@ import type {
   FinalizeOut,
   HealthOut,
   JobOut,
+  PageScale,
   TelemetrySummary,
 } from "./types";
 
@@ -89,6 +90,11 @@ export const api = {
   getDocumentBom: (docId: number) =>
     request<DocumentBom>(`/api/documents/${docId}/bom`),
   getAggregateBom: () => request<AggregateBom>("/api/bom/aggregate"),
+  setPageScale: (pageId: number, scale: number, sessionId?: string) =>
+    request<PageScale>(
+      `/api/pages/${pageId}/scale`,
+      json("PATCH", { scale, session_id: sessionId }),
+    ),
 
   telemetrySummary: (docId?: number) =>
     request<TelemetrySummary>(
