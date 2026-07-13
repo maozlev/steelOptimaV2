@@ -1,0 +1,104 @@
+{
+  "_README": [
+    "The right answers, confirmed by Maoz on 2026-07-13. Without this file no accuracy",
+    "claim about the extractor means anything.",
+    "",
+    "RULE for what counts as a cutout:",
+    "  - enclosed holes (circle / rectangle / obround slot)  -> YES",
+    "  - notches cut INTO the part, open to the edge         -> YES",
+    "  - the outer profile itself, chamfers, gear teeth      -> NO  (that is the part's shape)",
+    "",
+    "Sizes are REAL-WORLD mm (after applying the sheet scale), never paper mm.",
+    "scale = real_mm / paper_mm. A 1:5 sheet has scale 5.0; a 2:1 magnified sheet has 0.5."
+  ],
+
+  "117-626-141_1_BLANK_Rev.01.pdf": {
+    "part": "Flange",
+    "sheet_scale_text": "1:5",
+    "scale": 5.0,
+    "cutouts": [
+      { "shape": "circle", "diameter_mm": 235.0, "qty": 1, "source": "labelled Ø235 THRU" },
+      { "shape": "notch", "length_mm": 340.0, "width_mm": 100.0, "qty": 1, "source": "labelled 340 x 100, open to bottom edge" }
+    ]
+  },
+
+  "117-626-141_4_Rev.3_BLANK.pdf": {
+    "part": "Plate",
+    "sheet_scale_text": "1:2",
+    "scale": 2.0,
+    "note": "title block says SCALE:1:1 and is WRONG - do not trust it",
+    "cutouts": [
+      { "shape": "slot", "length_mm": 56.0, "width_mm": 26.0, "qty": 2, "source": "unlabelled; measured from geometry, confirmed by Maoz" }
+    ],
+    "must_not_detect": ["revision cloud near the 110 dimension"]
+  },
+
+  "12562-3000F501023_03.pdf": {
+    "part": "Plate",
+    "sheet_scale_text": "2:1",
+    "scale": 0.5,
+    "note": "MAGNIFIED sheet - paper is twice real size",
+    "cutouts": [
+      { "shape": "rectangle", "length_mm": 16.0, "width_mm": 4.5, "qty": 2, "source": "labelled 16 and 4.50" }
+    ],
+    "must_not_detect": ["the four 10x45 corner chamfers", "dimension arrowheads"]
+  },
+
+  "333-532-294_2_BLANK.pdf": {
+    "part": "Washer",
+    "sheet_scale_text": "1:3",
+    "scale": 3.0,
+    "note": "title block says SCALE:1:5 and is WRONG",
+    "cutouts": [
+      { "shape": "circle", "diameter_mm": 75.0, "qty": 1, "source": "labelled Ø75 THRU" }
+    ],
+    "must_not_detect": ["the Ø325 outer ring (that is the part)", "leader-line triangles"]
+  },
+
+  "ASH-071222-TW550-M10_BLANK.pdf": {
+    "part": "Teetheng Wheel (gear)",
+    "sheet_scale_text": "1:3.5",
+    "scale": 3.5,
+    "note": "title block says SCALE:1:5 and is WRONG",
+    "cutouts": [
+      { "shape": "circle", "diameter_mm": 290.0, "qty": 1, "source": "labelled Ø290 THRU" }
+    ],
+    "must_not_detect": [
+      "the Ø glyph in the text 'Ø290 THRU' - currently auto-approved as a Ø3.1 hole",
+      "the Ø551 toothed outer profile (that is the part)"
+    ]
+  },
+
+  "A (4).pdf": {
+    "part": "Beam",
+    "sheet_scale_text": null,
+    "scale": 1.0,
+    "note": "no Scale text; inferred from the Ø10 label matching the 9.99mm measured holes",
+    "cutouts": [
+      { "shape": "circle", "diameter_mm": 10.0, "qty": 293, "source": "labelled 10" }
+    ]
+  },
+
+  "A (3).pdf": {
+    "part": "Beam",
+    "sheet_scale_text": null,
+    "scale": null,
+    "note": "UNRESOLVED. No Scale text and no Ø label. Sheet carries 7128/3397/2857/300/216 mm labels, so it is certainly not 1:1. Needs the dimension-line-length method. Counts are known; sizes are not.",
+    "cutouts": [
+      { "shape": "circle", "diameter_mm": null, "qty": 128, "paper_diameter_mm": 5.16 },
+      { "shape": "rectangle", "length_mm": null, "width_mm": null, "qty": 19, "paper_dims_mm": [62.31, 6.06] },
+      { "shape": "rectangle", "length_mm": null, "width_mm": null, "qty": 1, "paper_dims_mm": [235.11, 6.06] }
+    ]
+  },
+
+  "Doc_HK3573_290626083217_00 (1).pdf": {
+    "part": "unknown",
+    "sheet_scale_text": null,
+    "scale": null,
+    "note": "UNRESOLVED scale. Earlier work recorded 18 holes + 5 slots as the expected counts; not re-confirmed against the drawing.",
+    "cutouts": [
+      { "shape": "circle", "diameter_mm": null, "qty": 18 },
+      { "shape": "slot", "length_mm": null, "width_mm": null, "qty": 5 }
+    ]
+  }
+}
