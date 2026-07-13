@@ -10,10 +10,18 @@ import type {
   FinalizeOut,
   HealthOut,
   JobOut,
+  BidOut,
+  MaterialRowOut,
+  MaterialTableDetailOut,
+  MaterialTableOut,
+  OrderPlanOut,
   PageScale,
+  PriceEntry,
   ProjectDetailOut,
   ProjectListOut,
   ProjectOut,
+  ProjectSummary,
+  TableKind,
   TelemetrySummary,
 } from "./types";
 
@@ -116,6 +124,68 @@ export const api = {
     });
   },
 
+  startTableJob: (docId: number) =>
+    request<JobOut>(`/api/documents/${docId}/table-jobs`, json("POST", {})),
+  startProjectTableJobs: (projectId: number) =>
+    request<JobOut[]>(`/api/projects/${projectId}/table-jobs`, {
+      method: "POST",
+    }),
+  listDocumentTables: (docId: number) =>
+    request<MaterialTableOut[]>(`/api/documents/${docId}/tables`),
+  getTable: (tableId: number) =>
+    request<MaterialTableDetailOut>(`/api/tables/${tableId}`),
+  patchTable: (
+    tableId: number,
+    body: { action: "approve" | "reject" | "reopen" | "set_kind"; kind?: TableKind },
+  ) => request<MaterialTableOut>(`/api/tables/${tableId}`, json("PATCH", body)),
+  patchMaterialRow: (
+    rowId: number,
+    body: {
+      action: "approve" | "reject" | "edit";
+      fields?: {
+        description?: string;
+        qty?: number;
+        unit_length_mm?: number;
+        total_length_mm?: number;
+        unit_weight_kg?: number;
+        total_weight_kg?: number;
+      };
+    },
+  ) => request<MaterialRowOut>(`/api/material-rows/${rowId}`, json("PATCH", body)),
+  getProjectSummary: (projectId: number) =>
+    request<ProjectSummary>(`/api/projects/${projectId}/summary`),
+  getProjectsSummary: (ids: number[]) =>
+    request<ProjectSummary>(`/api/projects-summary?ids=${ids.join(",")}`),
+
+  getPrices: (projectId: number) =>
+    request<{ entries: PriceEntry[] }>(`/api/projects/${projectId}/prices`),
+  putPrices: (projectId: number, entries: PriceEntry[]) =>
+    request<{ written: number }>(
+      `/api/projects/${projectId}/prices`,
+      json("PUT", { entries }),
+    ),
+  getBid: (projectId: number, mergeIds?: number[]) =>
+    request<BidOut>(
+      `/api/projects/${projectId}/bid` +
+        (mergeIds?.length ? `?ids=${mergeIds.join(",")}` : ""),
+    ),
+
+  createOrderPlan: (
+    projectId: number,
+    body: {
+      stock: { length_mm: number; price: number }[];
+      kerf_mm: number;
+      pieces?: { length_mm: number; qty: number }[];
+      material_key?: string;
+    },
+  ) =>
+    request<OrderPlanOut>(
+      `/api/projects/${projectId}/order-plans`,
+      json("POST", body),
+    ),
+  listOrderPlans: (projectId: number) =>
+    request<OrderPlanOut[]>(`/api/projects/${projectId}/order-plans`),
+
   telemetrySummary: (docId?: number) =>
     request<TelemetrySummary>(
       docId == null
@@ -127,6 +197,8 @@ export const api = {
     events: { type: string; entity_id?: number; payload?: object }[];
   }) => request<{ accepted: number }>("/api/telemetry/events", json("POST", batch)),
 };
+
+export const tableCropUrl = (tableId: number) => `/api/tables/${tableId}/crop`;
 
 export const renderUrl = (pageId: number, overlay = false, v?: string) => {
   const params = new URLSearchParams();

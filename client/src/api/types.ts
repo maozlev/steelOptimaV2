@@ -179,6 +179,141 @@ export interface ProjectDetailOut extends ProjectOut {
   documents: ProjectDocumentOut[];
 }
 
+export type TableKind = "materials" | "coordinates" | "other" | "unknown";
+export type TableStatus = "pending" | "approved" | "rejected";
+export type RowStatus =
+  | "auto_approved"
+  | "needs_review"
+  | "approved"
+  | "rejected"
+  | "edited";
+
+export interface MaterialCell {
+  col: number;
+  raw_ocr: string | null;
+  ocr_conf: number;
+  vlm_value: string | null;
+  value: string | null;
+  source: "ocr" | "vlm" | "fused" | "empty" | "manual";
+}
+
+export interface MaterialRowOut {
+  id: number;
+  table_id: number;
+  row_index: number;
+  cells: MaterialCell[];
+  material_key: string | null;
+  description: string | null;
+  qty: number | null;
+  unit_length_mm: number | null;
+  total_length_mm: number | null;
+  unit_weight_kg: number | null;
+  total_weight_kg: number | null;
+  flags: string[];
+  confidence: number;
+  status: RowStatus;
+}
+
+export interface MaterialTableOut {
+  id: number;
+  page_id: number;
+  job_id: number | null;
+  bbox: [number, number, number, number];
+  n_rows: number;
+  n_cols: number;
+  kind: TableKind;
+  title: string | null;
+  columns: { index: number; role: string }[];
+  header_rows: number;
+  confidence: number;
+  declared_total_weight_kg: number | null;
+  validation: {
+    declared_total_weight_kg: number | null;
+    summed_total_weight_kg: number | null;
+    weight_total_matches: boolean | null;
+  } | null;
+  status: TableStatus;
+  row_count: number;
+  needs_review_rows: number;
+  auto_approved_rows: number;
+}
+
+export interface MaterialTableDetailOut extends MaterialTableOut {
+  rows: MaterialRowOut[];
+}
+
+export interface SummaryRow {
+  material_key: string;
+  description: string | null;
+  qty: number;
+  total_length_mm: number;
+  total_weight_kg: number;
+  lengths: { unit_length_mm: number; qty: number }[];
+  documents: string[];
+  projects: string[];
+  row_ids: number[];
+}
+
+export interface ProjectSummary {
+  projects: { id: number; name: string }[];
+  rows: SummaryRow[];
+  totals: { qty: number; total_weight_kg: number; total_length_mm: number };
+  unreviewed: { pending_tables: number; needs_review_rows: number };
+}
+
+export type PricingUnit = "per_kg" | "per_m" | "per_unit";
+
+export interface PriceEntry {
+  material_key: string;
+  price: number;
+  pricing_unit: PricingUnit;
+}
+
+export interface BidRow extends SummaryRow {
+  price: number | null;
+  pricing_unit: PricingUnit | null;
+  line_total: number | null;
+}
+
+export interface BidOut {
+  projects: { id: number; name: string }[];
+  rows: BidRow[];
+  total: number;
+  unpriced_keys: string[];
+  unreviewed: { pending_tables: number; needs_review_rows: number };
+}
+
+export interface OrderLine {
+  stock_length_mm: number;
+  count: number;
+  unit_price: number;
+  subtotal: number;
+}
+
+export interface OrderPlanResult {
+  order: OrderLine[];
+  total_cost: number;
+  bars: { stock_length_mm: number; price: number; cuts: number[]; waste_mm: number }[];
+  kerf_mm: number;
+  total_bought_mm: number;
+  total_used_mm: number;
+  waste_pct: number;
+  infeasible_lengths_mm: number[];
+}
+
+export interface OrderPlanOut {
+  id: number;
+  project_id: number;
+  created_at: string;
+  params: {
+    material_key: string | null;
+    pieces: { length_mm: number; qty: number }[];
+    stock: { length_mm: number; price: number }[];
+    kerf_mm: number;
+  };
+  result: OrderPlanResult;
+}
+
 export interface AggregateBom {
   documents: { id: number; filename: string }[];
   untrusted_scale: string[];

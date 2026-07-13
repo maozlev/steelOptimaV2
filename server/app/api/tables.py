@@ -6,12 +6,31 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.db.models import Document, ExtractionJob, MaterialRow, MaterialTable, Page
+from app.db.models import (
+    Document,
+    ExtractionJob,
+    MaterialRow,
+    MaterialTable,
+    Page,
+    Project,
+)
 from app.db.session import get_db
 from app.schemas.jobs import JobCreateIn, JobOut
-from app.schemas.tables import MaterialTableDetailOut, MaterialTableOut
+from app.schemas.tables import (
+    MaterialRowOut,
+    MaterialTableDetailOut,
+    MaterialTableOut,
+    RowPatchIn,
+    TablePatchIn,
+)
+from app.tables.aggregate import project_summary
+from app.tables.normalize import canonical_material_key
 from app.tables.service import create_table_job
+from app.tables.validate import validate_row
+from app.telemetry import tracker
 from app.workers.queue import worker
+
+TABLE_KINDS = ("materials", "coordinates", "other", "unknown")
 
 router = APIRouter(prefix="/api", tags=["tables"])
 
@@ -64,6 +83,126 @@ def get_table(table_id: int, db: Session = Depends(get_db)):
         **base.model_dump(),
         rows=[MaterialRowOut.model_validate(r) for r in table.rows],
     )
+
+
+@router.patch("/tables/{table_id}", response_model=MaterialTableOut)
+def patch_table(table_id: int, body: TablePatchIn, db: Session = Depends(get_db)):
+    table = db.get(MaterialTable, table_id)
+    if not table:
+        raise HTTPException(404, "Table not found")
+
+    if body.action == "approve":
+        flagged = (
+            db.query(MaterialRow.id)
+            .filter(
+                MaterialRow.table_id == table_id,
+                MaterialRow.status == "needs_review",
+            )
+            .count()
+        )
+        if flagged:
+            raise HTTPException(
+                409, f"{flagged} rows still need review — approve or reject them first"
+            )
+        table.status = "approved"
+    elif body.action == "reject":
+        table.status = "rejected"
+    elif body.action == "reopen":
+        table.status = "pending"
+    elif body.action == "set_kind":
+        if body.kind not in TABLE_KINDS:
+            raise HTTPException(422, f"kind must be one of {TABLE_KINDS}")
+        table.kind = body.kind
+        if table.status == "rejected" and body.kind in ("materials", "unknown"):
+            table.status = "pending"  # a revived misclassification goes back to review
+    else:
+        raise HTTPException(422, "action must be approve, reject, reopen or set_kind")
+
+    tracker.emit(db, f"table_{body.action}", entity_id=table_id)
+    db.commit()
+    db.refresh(table)
+    return _with_row_counts(db, [table])[0]
+
+
+@router.patch("/material-rows/{row_id}", response_model=MaterialRowOut)
+def patch_row(row_id: int, body: RowPatchIn, db: Session = Depends(get_db)):
+    row = db.get(MaterialRow, row_id)
+    if not row:
+        raise HTTPException(404, "Row not found")
+    table = db.get(MaterialTable, row.table_id)
+    if table.status == "approved":
+        raise HTTPException(409, "Table is approved — reopen it to edit rows")
+
+    if body.action == "approve":
+        row.status = "approved"
+    elif body.action == "reject":
+        row.status = "rejected"
+    elif body.action == "edit":
+        if not body.fields:
+            raise HTTPException(422, "edit requires fields")
+        fields = body.fields
+        for name in (
+            "description",
+            "qty",
+            "unit_length_mm",
+            "total_length_mm",
+            "unit_weight_kg",
+            "total_weight_kg",
+        ):
+            value = getattr(fields, name)
+            if value is not None:
+                setattr(row, name, value)
+        # a human owns the row now: rebuild the key and re-check the arithmetic
+        import json as _json
+
+        roles = [c["role"] for c in _json.loads(table.columns_json or "[]")]
+        row.material_key = canonical_material_key(
+            {
+                "description": row.description,
+                "unit_length": (
+                    str(row.unit_length_mm) if row.unit_length_mm is not None else None
+                ),
+            }
+        )
+        validation = validate_row(
+            {
+                "qty": row.qty,
+                "unit_length_mm": row.unit_length_mm,
+                "total_length_mm": row.total_length_mm,
+                "unit_weight_kg": row.unit_weight_kg,
+                "total_weight_kg": row.total_weight_kg,
+            },
+            roles,
+        )
+        row.flags_json = _json.dumps(validation.flags)
+        row.confidence = 1.0
+        row.status = "edited"
+    else:
+        raise HTTPException(422, "action must be approve, reject or edit")
+
+    tracker.emit(db, f"material_row_{body.action}", entity_id=row_id)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.get("/projects/{project_id}/summary")
+def get_project_summary(project_id: int, db: Session = Depends(get_db)):
+    if not db.get(Project, project_id):
+        raise HTTPException(404, "Project not found")
+    return project_summary(db, [project_id])
+
+
+@router.get("/projects-summary")
+def get_projects_summary(ids: str, db: Session = Depends(get_db)):
+    """Cross-project rollup: ?ids=1,2,3."""
+    try:
+        project_ids = [int(x) for x in ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(422, "ids must be a comma-separated list of integers")
+    if not project_ids:
+        raise HTTPException(422, "at least one project id required")
+    return project_summary(db, project_ids)
 
 
 @router.get("/tables/{table_id}/crop")

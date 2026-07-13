@@ -1,8 +1,10 @@
 import { useState } from "react";
 import AggregatedSummaryView from "./views/AggregatedSummaryView";
 import DocumentsView from "./views/DocumentsView";
+import MergedSummaryView from "./views/MergedSummaryView";
 import ProjectView from "./views/ProjectView";
 import ProjectsView from "./views/ProjectsView";
+import TableReviewView from "./views/TableReviewView";
 import WorkspaceView from "./views/WorkspaceView";
 
 type View =
@@ -10,7 +12,9 @@ type View =
   | { kind: "workspace"; docId: number; autoRun: boolean }
   | { kind: "summary" }
   | { kind: "projects" }
-  | { kind: "project"; projectId: number };
+  | { kind: "project"; projectId: number }
+  | { kind: "tableReview"; tableId: number; projectId: number }
+  | { kind: "mergedSummary" };
 
 export default function App() {
   const [view, setView] = useState<View>({ kind: "documents" });
@@ -33,6 +37,7 @@ export default function App() {
     return (
       <ProjectsView
         onOpen={(projectId) => setView({ kind: "project", projectId })}
+        onMergedSummary={() => setView({ kind: "mergedSummary" })}
         onBack={() => setView({ kind: "documents" })}
       />
     );
@@ -43,8 +48,24 @@ export default function App() {
       <ProjectView
         projectId={view.projectId}
         onBack={() => setView({ kind: "projects" })}
+        onOpenTable={(tableId) =>
+          setView({ kind: "tableReview", tableId, projectId: view.projectId })
+        }
       />
     );
+  }
+
+  if (view.kind === "tableReview") {
+    return (
+      <TableReviewView
+        tableId={view.tableId}
+        onBack={() => setView({ kind: "project", projectId: view.projectId })}
+      />
+    );
+  }
+
+  if (view.kind === "mergedSummary") {
+    return <MergedSummaryView onBack={() => setView({ kind: "projects" })} />;
   }
 
   return (

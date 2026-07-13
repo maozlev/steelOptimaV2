@@ -5,6 +5,19 @@ cutouts (hole / slot / notch / freeform) with a deterministic CV pipeline, escal
 low-confidence candidates to a local Ollama VLM, and hands the operator an interactive
 workspace to review and finalize a bill of materials.
 
+**Second pipeline (2026-07): material tables.** Projects hold many large CAD PDFs; the
+`app/tables/` pipeline finds bill-of-material tables (grid geometry from `get_drawings()`
+ruling lines), reads cells (recognition-only RapidOCR on AA-off renders; VLM for Hebrew
+text and repairs), validates rows against the table's own arithmetic (qty × unit = total,
+weight column vs the printed grand total), and aggregates approved rows into per-project /
+cross-project summaries. On top: a pricing/bid page (price per kg / m / unit, chosen per
+line) and a 1D cutting-stock order optimizer (`app/orders/optimizer.py`, NO splicing —
+10×13m poles from 15m stock is 10 bars). Eval: `uv run python tools/eval_tables.py`
+(currently 210/210 cells, 0 wrong-and-unflagged). Two hard-won reading rules, both fixture-
+guarded: render table crops with `fitz.TOOLS.set_aa_level(0)` (AA turns hairline stroke
+glyphs into unreadable gray), and never run RapidOCR *detection* on cells — ink-crop each
+cell and run recognition only (det fragments letter-spaced digits: "9000" → "9").
+
 ## How Maoz wants me to work
 
 **Don't be nice. Give the hard truth.** If the code is bad, say it's bad. If an instruction is

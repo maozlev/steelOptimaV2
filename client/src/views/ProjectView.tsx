@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { ProjectDetailOut } from "../api/types";
+import type {
+  MaterialTableOut,
+  ProjectDetailOut,
+  ProjectSummary,
+} from "../api/types";
+import BidPanel from "../components/BidPanel";
+import MaterialSummaryTable, {
+  exportSummaryCsv,
+} from "../components/MaterialSummaryTable";
+import OrdersPanel from "../components/OrdersPanel";
 import UploadDropzone from "../components/UploadDropzone";
 
 const JOB_LABEL: Record<string, string> = {
@@ -10,19 +19,32 @@ const JOB_LABEL: Record<string, string> = {
   failed: "FAILED",
 };
 
+type Tab = "documents" | "tables" | "summary" | "bid" | "orders";
+
+const KIND_STYLE: Record<string, string> = {
+  materials: "bg-emerald-900/60 text-emerald-300",
+  coordinates: "bg-sky-900/60 text-sky-300",
+  other: "bg-zinc-800 text-zinc-400",
+  unknown: "bg-amber-900/60 text-amber-300",
+};
+
 export default function ProjectView({
   projectId,
   onBack,
+  onOpenTable,
 }: {
   projectId: number;
   onBack: () => void;
+  onOpenTable: (tableId: number) => void;
 }) {
   const [project, setProject] = useState<ProjectDetailOut | null>(null);
+  const [tab, setTab] = useState<Tab>("documents");
+  const [tables, setTables] = useState<Map<number, MaterialTableOut[]>>(new Map());
+  const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState<{ done: number; total: number } | null>(
     null,
   );
-  // one sequential upload queue — dropping 200 PDFs must not fire 200 parallel posts
   const queue = useRef<File[]>([]);
   const pumping = useRef(false);
 
@@ -30,10 +52,42 @@ export default function ProjectView({
     () => api.getProject(projectId).then(setProject).catch((e) => setError(e.message)),
     [projectId],
   );
-
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // poll while any document is still being scanned
+  const scanning = project?.documents.some((d) =>
+    ["queued", "running"].includes(d.last_table_job_status ?? ""),
+  );
+  useEffect(() => {
+    if (!scanning) return;
+    const t = window.setInterval(refresh, 2500);
+    return () => window.clearInterval(t);
+  }, [scanning, refresh]);
+
+  const loadTables = useCallback(async () => {
+    if (!project) return;
+    const entries = await Promise.all(
+      project.documents.map(
+        async (d) => [d.id, await api.listDocumentTables(d.id)] as const,
+      ),
+    );
+    setTables(new Map(entries));
+  }, [project]);
+
+  const loadSummary = useCallback(
+    () =>
+      api.getProjectSummary(projectId).then(setSummary).catch((e) =>
+        setError(e.message),
+      ),
+    [projectId],
+  );
+
+  useEffect(() => {
+    if (tab === "tables") void loadTables();
+    if (tab === "summary" || tab === "orders" || tab === "bid") void loadSummary();
+  }, [tab, loadTables, loadSummary]);
 
   const pump = useCallback(async () => {
     if (pumping.current) return;
@@ -67,14 +121,24 @@ export default function ProjectView({
 
   if (!project) {
     return (
-      <div className="p-8 text-sm text-zinc-500">
-        {error ?? "Loading project…"}
-      </div>
+      <div className="p-8 text-sm text-zinc-500">{error ?? "Loading project…"}</div>
     );
   }
 
+  const tabButton = (t: Tab, label: string) => (
+    <button
+      key={t}
+      onClick={() => setTab(t)}
+      className={`rounded px-3 py-1.5 text-sm ${
+        tab === t ? "bg-zinc-700 font-medium" : "bg-zinc-900 hover:bg-zinc-800"
+      }`}
+    >
+      {label}
+    </button>
+  );
+
   return (
-    <div className="mx-auto flex h-full max-w-3xl flex-col gap-6 p-8">
+    <div className="mx-auto flex h-full max-w-5xl flex-col gap-4 p-8">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
@@ -92,13 +156,14 @@ export default function ProjectView({
         </button>
       </header>
 
-      <UploadDropzone onFile={enqueue} multiple />
+      <nav className="flex gap-2">
+        {tabButton("documents", "📄 Documents")}
+        {tabButton("tables", "🧾 Tables")}
+        {tabButton("summary", "📋 Summary")}
+        {tabButton("bid", "💰 Bid")}
+        {tabButton("orders", "✂ Orders")}
+      </nav>
 
-      {uploading && (
-        <div className="rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-300">
-          Uploading {uploading.done + 1} / {uploading.total}…
-        </div>
-      )}
       {error && (
         <div className="rounded border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-300">
           {error}
@@ -106,49 +171,166 @@ export default function ProjectView({
       )}
 
       <div className="flex-1 overflow-auto">
-        {project.documents.length === 0 ? (
-          <p className="mt-8 text-center text-sm text-zinc-500">
-            No documents yet — drop this tender's PDFs above.
-          </p>
-        ) : (
-          <ul className="divide-y divide-zinc-800 rounded border border-zinc-800">
-            {project.documents.map((d) => (
-              <li key={d.id} className="flex items-center justify-between px-4 py-3">
-                <div>
-                  <div className="font-medium">{d.filename}</div>
-                  <div className="text-xs text-zinc-500">
-                    {d.page_count} page{d.page_count === 1 ? "" : "s"} ·{" "}
-                    {new Date(d.created_at).toLocaleString()}
+        {tab === "documents" && (
+          <div className="flex flex-col gap-4">
+            <UploadDropzone onFile={enqueue} multiple />
+            {uploading && (
+              <div className="rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-300">
+                Uploading {uploading.done + 1} / {uploading.total}…
+              </div>
+            )}
+            {project.documents.length === 0 ? (
+              <p className="mt-6 text-center text-sm text-zinc-500">
+                No documents yet — drop this tender's PDFs above. Table scanning
+                starts automatically.
+              </p>
+            ) : (
+              <ul className="divide-y divide-zinc-800 rounded border border-zinc-800">
+                {project.documents.map((d) => (
+                  <li
+                    key={d.id}
+                    className="flex items-center justify-between px-4 py-3"
+                  >
+                    <div>
+                      <div className="font-medium">{d.filename}</div>
+                      <div className="text-xs text-zinc-500">
+                        {d.page_count} page{d.page_count === 1 ? "" : "s"} ·{" "}
+                        {new Date(d.created_at).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {d.needs_review_rows > 0 && (
+                        <span className="rounded bg-amber-900/60 px-2 py-0.5 text-xs font-medium text-amber-300">
+                          {d.needs_review_rows} to review
+                        </span>
+                      )}
+                      {d.table_count > 0 && (
+                        <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
+                          {d.table_count} table{d.table_count === 1 ? "" : "s"}
+                        </span>
+                      )}
+                      {d.last_table_job_status && (
+                        <span
+                          className={`rounded px-2 py-0.5 text-xs font-medium ${
+                            d.last_table_job_status === "failed"
+                              ? "bg-red-900/60 text-red-300"
+                              : d.last_table_job_status === "done"
+                                ? "bg-emerald-900/60 text-emerald-300"
+                                : "bg-sky-900/60 text-sky-300"
+                          }`}
+                        >
+                          {JOB_LABEL[d.last_table_job_status]}
+                        </span>
+                      )}
+                      <button
+                        onClick={() =>
+                          api
+                            .startTableJob(d.id)
+                            .then(refresh)
+                            .catch((e) => setError(e.message))
+                        }
+                        className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700"
+                        title="(Re)scan for material tables"
+                      >
+                        ↻ scan
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {tab === "tables" && (
+          <div className="flex flex-col gap-3">
+            {[...tables.entries()].map(([docId, docTables]) => {
+              const doc = project.documents.find((d) => d.id === docId);
+              if (!docTables.length) return null;
+              return (
+                <div key={docId}>
+                  <div className="mb-1 text-xs font-medium text-zinc-400">
+                    {doc?.filename}
                   </div>
+                  <ul className="divide-y divide-zinc-800 rounded border border-zinc-800">
+                    {docTables.map((t) => (
+                      <li key={t.id} className="flex items-center">
+                        <button
+                          onClick={() => onOpenTable(t.id)}
+                          className="flex flex-1 items-center justify-between px-4 py-2.5 text-left hover:bg-zinc-900"
+                        >
+                          <div>
+                            <span className="font-medium">
+                              {t.title || `Table #${t.id}`}
+                            </span>
+                            <span className="ml-2 text-xs text-zinc-500">
+                              {t.n_rows}×{t.n_cols}
+                            </span>
+                            <span
+                              className={`ml-2 rounded px-1.5 py-0.5 text-[10px] ${
+                                KIND_STYLE[t.kind]
+                              }`}
+                            >
+                              {t.kind}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            {t.needs_review_rows > 0 && (
+                              <span className="rounded bg-amber-900/60 px-2 py-0.5 font-medium text-amber-300">
+                                {t.needs_review_rows} flagged
+                              </span>
+                            )}
+                            {t.status === "approved" && (
+                              <span className="rounded bg-emerald-900/60 px-2 py-0.5 font-medium text-emerald-300">
+                                APPROVED
+                              </span>
+                            )}
+                            {t.status === "rejected" && (
+                              <span className="rounded bg-zinc-800 px-2 py-0.5 text-zinc-500">
+                                ignored
+                              </span>
+                            )}
+                            <span className="text-zinc-500">→</span>
+                          </div>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <div className="flex items-center gap-2">
-                  {d.needs_review_rows > 0 && (
-                    <span className="rounded bg-amber-900/60 px-2 py-0.5 text-xs font-medium text-amber-300">
-                      {d.needs_review_rows} to review
-                    </span>
-                  )}
-                  {d.table_count > 0 && (
-                    <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
-                      {d.table_count} table{d.table_count === 1 ? "" : "s"}
-                    </span>
-                  )}
-                  {d.last_table_job_status && (
-                    <span
-                      className={`rounded px-2 py-0.5 text-xs font-medium ${
-                        d.last_table_job_status === "failed"
-                          ? "bg-red-900/60 text-red-300"
-                          : d.last_table_job_status === "done"
-                            ? "bg-emerald-900/60 text-emerald-300"
-                            : "bg-sky-900/60 text-sky-300"
-                      }`}
-                    >
-                      {JOB_LABEL[d.last_table_job_status]}
-                    </span>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
+              );
+            })}
+            {[...tables.values()].every((v) => v.length === 0) && (
+              <p className="mt-6 text-center text-sm text-zinc-500">
+                No tables detected yet — scan documents first.
+              </p>
+            )}
+          </div>
+        )}
+
+        {tab === "summary" &&
+          (summary ? (
+            <div>
+              <div className="mb-3 flex justify-end">
+                <button
+                  onClick={() =>
+                    exportSummaryCsv(summary, `${project.name}-materials.csv`)
+                  }
+                  disabled={summary.rows.length === 0}
+                  className="rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700 disabled:opacity-40"
+                >
+                  ⬇ CSV
+                </button>
+              </div>
+              <MaterialSummaryTable summary={summary} />
+            </div>
+          ) : (
+            <p className="text-sm text-zinc-500">Loading summary…</p>
+          ))}
+
+        {tab === "bid" && <BidPanel projectId={projectId} />}
+
+        {tab === "orders" && (
+          <OrdersPanel projectId={projectId} summary={summary} />
         )}
       </div>
     </div>

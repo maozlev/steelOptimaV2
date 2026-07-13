@@ -4,9 +4,11 @@ import type { ProjectListOut } from "../api/types";
 
 export default function ProjectsView({
   onOpen,
+  onMergedSummary,
   onBack,
 }: {
   onOpen: (projectId: number) => void;
+  onMergedSummary: () => void;
   onBack: () => void;
 }) {
   const [projects, setProjects] = useState<ProjectListOut[]>([]);
@@ -53,12 +55,20 @@ export default function ProjectsView({
             Material tables, bids &amp; orders per tender
           </p>
         </div>
-        <button
-          onClick={onBack}
-          className="rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700"
-        >
-          ← Documents
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onMergedSummary}
+            className="rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700"
+          >
+            📋 Merged summary
+          </button>
+          <button
+            onClick={onBack}
+            className="rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700"
+          >
+            ← Documents
+          </button>
+        </div>
       </header>
 
       <div className="flex gap-2">

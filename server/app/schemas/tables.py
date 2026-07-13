@@ -72,3 +72,22 @@ class MaterialTableOut(BaseModel):
 
 class MaterialTableDetailOut(MaterialTableOut):
     rows: list[MaterialRowOut] = []
+
+
+class TablePatchIn(BaseModel):
+    action: str  # approve | reject | reopen | set_kind
+    kind: str | None = None
+
+
+class RowEditFields(BaseModel):
+    description: str | None = None
+    qty: float | None = None
+    unit_length_mm: float | None = None
+    total_length_mm: float | None = None
+    unit_weight_kg: float | None = None
+    total_weight_kg: float | None = None
+
+
+class RowPatchIn(BaseModel):
+    action: str  # approve | reject | edit
+    fields: RowEditFields | None = None

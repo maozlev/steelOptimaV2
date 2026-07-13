@@ -12,6 +12,8 @@ from app.api import (
     export,
     health,
     jobs,
+    orders,
+    pricing,
     projects,
     tables,
     telemetry,
@@ -60,6 +62,8 @@ app.include_router(cutouts.router)
 app.include_router(bom.router)
 app.include_router(projects.router)
 app.include_router(tables.router)
+app.include_router(pricing.router)
+app.include_router(orders.router)
 app.include_router(export.router)
 app.include_router(telemetry.router)
 app.include_router(events.router)
