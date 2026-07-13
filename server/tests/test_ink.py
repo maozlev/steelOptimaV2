@@ -104,6 +104,30 @@ def test_glyph_is_not_extracted_as_a_hole():
     assert cands[0].measured_dims["diameter_mm"] == pytest.approx(82.9, abs=1.0)
 
 
+def test_a_rings_bore_is_not_deleted_as_a_duplicate_of_the_ring():
+    """Doc_HK3573 is a gasket: 16 bolt holes and one central Ø605 bore.
+
+    The bore fills (605/686)^2 = 78% of the Ø686 ring around it, and _dedupe dropped any
+    shell overlapping a bigger one by more than 40% — a rule written to kill concentric
+    countersink strokes. So the system deleted the central hole *precisely because the
+    part is a ring*. Two separate parent-ratio caps then had to be raised to let a bore
+    that large survive scoring at all.
+    """
+    page = fitz.open(PDFS_DIR / "Doc_HK3573_290626083217_00 (1).pdf")[0]
+    cands = extract_candidates(page)
+    holes = [c for c in cands if c.kind == "hole"]
+
+    # Ø605 on a 1:5 sheet -> 121mm of paper
+    bore = [c for c in holes if abs(c.measured_dims["diameter_mm"] - 121.0) < 2.0]
+    assert bore, "the central bore of the ring must be found"
+
+    # and the 16 bolt holes: Ø12.5 on a 1:5 sheet -> 2.47mm of paper. (A 2.62mm circle
+    # nearby is a known annotation false positive — this sheet is drawn wholly in black,
+    # so its layers cannot be separated by colour. It costs a click, not a part.)
+    bolts = [c for c in holes if abs(c.measured_dims["diameter_mm"] - 2.47) < 0.1]
+    assert len(bolts) == 16
+
+
 def test_annotation_ink_is_kept_for_the_scale_reader():
     """Annotation paths are filtered out of candidate-building, not thrown away:
     the dimension lines are what the sheet scale is recovered from."""

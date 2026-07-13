@@ -12,21 +12,26 @@ SNAP_DECIMALS = 2
 # a polygon covering this much of the page is the drawing frame, not a part
 FRAME_AREA_RATIO = 0.5
 MIN_CUTOUT_AREA_PT2 = 4.0
-MAX_CUTOUT_PARENT_RATIO = 0.6
+# A cutout can fill most of its part: Doc_HK3573 is a gasket whose Ø605 bore is 78% of
+# the Ø686 ring around it. The old cap of 0.6 rejected it outright. What this still has
+# to reject is a double-stroked part outline, which is ~99% of itself.
+MAX_CUTOUT_PARENT_RATIO = 0.90
 CIRCLE_FIT_THRESHOLD = 0.90
 RECT_FIT_THRESHOLD = 0.95
 # A rectangle fills its bounding box (1.00); an obround fills 1 - 0.2146*(W/L), which
 # bottoms out at 0.785 as W approaches L. Anything at or above that is a rectangle or a
 # slot; below it the shape resembles neither. The old 0.95 gate admitted only skinny
 # slots and dropped fat ones into "freeform", where the penalty auto-rejected them.
-SLOT_FIT_THRESHOLD = 0.85
+SLOT_FIT_THRESHOLD = 0.90
 # An annotation box is roughly text-sized: a title-block cell or a dimension frame is
 # ~10-40pt across. A bore with its own label inside it is far bigger (ASH's Ø290 bore
 # is 234pt), and must not be mistaken for a box that exists to hold text.
 TEXT_BOX_MAX_SPAN_PT = 40.0
-# concentric double-strokes (hole + countersink/centermark circle) yield
-# IoU = A_inner/A_outer ~ 0.45-0.9; distinct real cutouts never overlap
+# two shells overlapping more than this are the same outline drawn twice...
 DUPLICATE_IOU = 0.40
+# ...unless one is genuinely NESTED inside the other and materially smaller, in which
+# case it is a real cutout: a gasket's bore fills 78% of its ring and must survive.
+NESTED_MAX_RATIO = 0.95
 
 PT_TO_MM = 25.4 / 72
 
@@ -168,6 +173,17 @@ def _iou(a: Polygon, b: Polygon) -> float:
 
 
 def _dedupe(shells: list[tuple[Polygon, bool]]) -> list[tuple[Polygon, bool]]:
+    """Drop shells that are a second stroke of one already kept.
+
+    Overlap alone does not mean duplication: a hole NESTED inside a shape overlaps it
+    heavily and is still a real, distinct cutout. Doc_HK3573 is a gasket whose Ø605 bore
+    sits inside its Ø686 ring — an IoU of 0.78 — and the old rule deleted the bore as a
+    duplicate of the ring. The system was throwing away the central hole precisely
+    because the part is a ring.
+
+    A genuine double-stroke is the SAME outline drawn twice, so it fills nearly all of
+    what it overlaps. That is the only thing dropped here.
+    """
     kept: list[tuple[Polygon, bool]] = []
     for p, from_loop in shells:  # sorted by area desc, loops preferred on ties
         pb = p.bounds
@@ -176,9 +192,13 @@ def _dedupe(shells: list[tuple[Polygon, bool]]) -> list[tuple[Polygon, bool]]:
             kb = k.bounds
             if pb[0] > kb[2] or pb[2] < kb[0] or pb[1] > kb[3] or pb[3] < kb[1]:
                 continue
-            if _iou(p, k) > DUPLICATE_IOU:
-                dup = True
-                break
+            if _iou(p, k) <= DUPLICATE_IOU:
+                continue
+            # nested (a bore in a ring, a hole in a countersink), not restroked
+            if k.contains(p.representative_point()) and p.area <= NESTED_MAX_RATIO * k.area:
+                continue
+            dup = True
+            break
         if not dup:
             kept.append((p, from_loop))
     return kept
@@ -282,24 +302,34 @@ def build_candidates(
         ((Polygon(p.exterior), fl) for p, fl in tagged),
         key=lambda t: (-t[0].area, not t[1]),
     )
-    shells = _dedupe(shells)
 
     inner = [
         (s, fl) for s, fl in shells if s.area < FRAME_AREA_RATIO * page_area
     ]
 
     # parent = smallest non-frame shell strictly containing the candidate
-    candidates: list[Candidate] = []
-    for s, from_loop in inner:
-        parent = None
+    def parent_of(s: Polygon) -> Polygon | None:
         for other, _ in reversed(inner):  # smallest first
             if other.area <= s.area:
                 continue
             if other.contains(s.representative_point()):
-                parent = other
-                break
-        if parent is None:
-            continue  # part outline, not a cutout
+                return other
+        return None
+
+    # A shell with no parent is a part outline, not a cutout. Dedupe runs only among
+    # the ones that DO have a parent: a gasket's Ø605 bore overlaps its own Ø686 outline
+    # by (605/686)^2 = 78%, so deduping it against the outline deleted the bore — the
+    # system was discarding the central hole precisely because the part is a ring.
+    # Concentric double-strokes (a hole and its countersink ring) both sit inside the
+    # part, both have a parent, and are still deduped as before.
+    with_parent = [(s, fl, p) for s, fl in inner if (p := parent_of(s)) is not None]
+    kept = _dedupe([(s, fl) for s, fl, _ in with_parent])
+    kept_ids = {id(s) for s, _ in kept}
+
+    candidates: list[Candidate] = []
+    for s, from_loop, parent in with_parent:
+        if id(s) not in kept_ids:
+            continue
         if s.area > parent.area * MAX_CUTOUT_PARENT_RATIO:
             continue
         kind, shape_fit, dims = _classify(s)

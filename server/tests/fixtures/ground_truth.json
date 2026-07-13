@@ -92,13 +92,19 @@
   },
 
   "Doc_HK3573_290626083217_00 (1).pdf": {
-    "part": "unknown",
+    "part": "Ring / gasket",
     "sheet_scale_text": null,
-    "scale": null,
-    "note": "UNRESOLVED scale. Earlier work recorded 18 holes + 5 slots as the expected counts; not re-confirmed against the drawing.",
+    "scale": 5.0,
+    "note": "Confirmed by Maoz 2026-07-13 against the drawing. NO SLOTS EXIST. The earlier entry here said '18 holes + 5 slots', inherited from old notes and never checked — the pipeline was being tuned against a wrong answer. The 'slots' were the boxed Ø605 / Ø642 dimension callouts and the ⊕□1 feature-control frame. Scale from the Ø686 outer ring measuring 137.2mm of paper.",
     "cutouts": [
-      { "shape": "circle", "diameter_mm": null, "qty": 18 },
-      { "shape": "slot", "length_mm": null, "width_mm": null, "qty": 5 }
+      { "shape": "circle", "diameter_mm": 12.5, "qty": 16, "source": "labelled 'Ø 12.5 +0.5 -0.2 (16x)'" },
+      { "shape": "circle", "diameter_mm": 605.0, "qty": 1, "source": "labelled Ø605 — the central bore of the ring" }
+    ],
+    "must_not_detect": [
+      "the Ø686 / Ø642 outer rings (that is the part)",
+      "the boxed Ø605 and Ø642 dimension callouts",
+      "the ⊕□1 feature-control frame",
+      "the bolt-circle centreline"
     ]
   }
 }

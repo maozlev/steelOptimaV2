@@ -36,6 +36,7 @@ FRAME_MIN_CHANNEL = 0.6
 MIN_GEOMETRY_SHARE = 0.05
 
 
+
 def classify_path(path: dict) -> str:
     """geometry | annotation | frame, from stroke colour."""
     color = path.get("color")
@@ -54,13 +55,21 @@ def split_ink(page: fitz.Page) -> tuple[list[dict], list[dict]]:
 
     Annotation paths are returned rather than discarded: dimension lines and their
     leaders are what `scale.py` measures the sheet scale from.
+
+    Not every drawing follows the colour convention. Doc_HK3573 is wholly black and
+    separates its layers by stroke WIDTH instead (378 thin paths against 81 thick), the
+    other half of the ISO convention. Splitting on width was tried and measured: it did
+    not recover a single extra cutout there, and it cost recall elsewhere. So it is not
+    done. On such pages the later filters — the text penalty and the parent hierarchy —
+    carry the load, and some annotation artifacts survive as false positives. That is the
+    right trade: a false positive costs a click, a missed hole costs a part.
     """
     paths = page.get_drawings()
     geometry = [p for p in paths if classify_path(p) == GEOMETRY]
     annotation = [p for p in paths if classify_path(p) == ANNOTATION]
 
-    # Fail safe: if the page does not follow the colour convention, do not silently
-    # throw the drawing away. Treat everything that is not the frame as geometry.
+    # Fail safe: if the page follows no convention we recognise, do not silently throw
+    # the drawing away. Treat everything that is not the frame as geometry.
     if paths and len(geometry) < MIN_GEOMETRY_SHARE * len(paths):
         geometry = [p for p in paths if classify_path(p) != FRAME]
 

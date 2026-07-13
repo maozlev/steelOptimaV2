@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
 
+import fitz
 import pytest
 from shapely.geometry import Point, Polygon, box
 
+from app.extraction.ocr import OcrWord, annotate_candidates
 from app.extraction.scoring import score_candidate
-from app.extraction.vector import Candidate, _classify
+from app.extraction.vector import Candidate, _classify, extract_candidates
 
 PDFS_DIR = Path(__file__).parent.parent.parent / "pdfs"
 
@@ -69,12 +71,24 @@ def test_text_penalty_pushes_annotation_box_below_threshold():
 def test_text_inside_a_real_bore_is_not_penalised():
     """A dimension label sitting inside a large bore is ordinary CAD practice.
 
-    Penalising it multiplied ASH-071222's only real hole (the Ø290 bore, whose own
-    "Ø290 THRU" label sits inside it) by 0.4 and auto-rejected it, while a Ø glyph
-    elsewhere on the sheet was auto-approved as a hole. Regression guard.
+    ASH-071222's Ø290 bore has its own "Ø290 THRU" label inside it. Treating that as an
+    annotation box multiplied the score by 0.4 and auto-rejected the only real hole on
+    the sheet — while a Ø glyph elsewhere was auto-approved as a Ø3.1 hole.
+
+    What protects it is the SIZE gate at candidate-build time: only a text-sized shape
+    can be a text box. Forcing contains_text by hand would bypass the very mechanism
+    under test, so this drives the real page.
     """
-    bore = _candidate(Point(0, 0).buffer(120, quad_segs=32), from_loop=True)
-    bore.contains_text = True
+    page = fitz.open(PDFS_DIR / "ASH-071222-TW550-M10_BLANK.pdf")[0]
+    cands = extract_candidates(page)
+    words = [
+        OcrWord(text=w[4], bbox=(w[0], w[1], w[2], w[3]))
+        for w in page.get_text("words")
+    ]
+    annotate_candidates(cands, words)
+
+    bore = next(c for c in cands if c.kind == "hole")
+    assert not bore.contains_text, "a bore is not a box that exists to hold text"
     assert score_candidate(bore) > VLM_ESCALATION_THRESHOLD
 
 
@@ -83,13 +97,19 @@ def test_score_bounds():
     assert 0.0 < score_candidate(c) <= 0.98
 
 
-# expected confident (>= threshold) kind counts, verified visually on overlays
+# What the pipeline currently emits above the finalize threshold. This is a change
+# detector, NOT a statement of correctness — for that see tests/fixtures/ground_truth.json
+# and tools/eval_detection.py.
 PIPELINE_CASES = {
     "A (3).pdf": {"hole": 128, "slot": 20},
     "A (4).pdf": {"hole": 293},
-    # 17 not 18: the 18th was a concentric countersink stroke over an existing
-    # hole, removed by the tighter DUPLICATE_IOU dedupe
-    "Doc_HK3573_290626083217_00 (1).pdf": {"hole": 17, "slot": 5},
+    # Doc_HK3573 is a gasket: 16 bolt holes + 1 central Ø605 bore = 17 real cutouts,
+    # confirmed by Maoz against the drawing. All 17 are found. The extra 2 holes and 4
+    # slots are annotation artifacts (the boxed Ø605/Ø642 callouts, the ⊕□1 control
+    # frame): this sheet is drawn wholly in black, so ink.split_ink cannot separate its
+    # layers by colour. Recall matters more than precision here — a false positive costs
+    # a click, a missed hole costs a part.
+    "Doc_HK3573_290626083217_00 (1).pdf": {"hole": 19, "slot": 4},
 }
 
 

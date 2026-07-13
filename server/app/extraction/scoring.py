@@ -18,7 +18,10 @@ RASTER_SNAP_MIN_FIT = 0.97
 MAX_CONFIDENCE = 0.98
 
 MIN_PARENT_RATIO = 1e-6
-MAX_PARENT_RATIO = 0.5
+# Must track vector.MAX_CUTOUT_PARENT_RATIO. A gasket's bore fills 78% of its ring; with
+# this left at 0.5 the bore was denied the size-plausibility bonus and landed a hair
+# under the finalize threshold — extracted, then thrown away for being too big.
+MAX_PARENT_RATIO = 0.90
 TEXT_PENALTY_FACTOR = 0.4
 
 # annotated dimension vs measured geometry, normalized by page drawing scale
@@ -54,11 +57,16 @@ def score_candidate(c: Candidate, dimension_agreement: bool | None = None) -> fl
         # measured vs annotated mismatch is a VLM escalation trigger
         score -= DIMENSION_CONFLICT_PENALTY
 
-    # Text inside a closed shape suggests an annotation box — but only if the shape is
-    # not already a clean circle/slot/rectangle. A dimension label routinely sits inside
-    # a real bore or slot, and penalising those rejected the only true hole on ASH-071222
-    # and one of Doc_HK3573's slots. An annotation box, by contrast, is a freeform face.
-    if c.contains_text and c.kind == "freeform":
+    # Text inside a TEXT-SIZED closed shape is an annotation box, not a cutout: a boxed
+    # dimension, a title-block cell, a feature-control frame. Doc_HK3573's boxed "Ø605"
+    # and "Ø642" callouts are perfect rectangles and would otherwise score 0.95 as slots.
+    #
+    # The size gate is what makes this safe, and it lives in vector.build_candidates and
+    # ocr.annotate_candidates. Without it this penalty rejected any bore large enough to
+    # hold its own dimension label — which killed ASH-071222's Ø290 bore, the only real
+    # hole on that sheet. Kind is NOT the discriminator: an annotation box is a clean
+    # rectangle, so exempting rectangles just lets every boxed callout through.
+    if c.contains_text:
         score *= TEXT_PENALTY_FACTOR
 
     return round(min(max(score, 0.0), MAX_CONFIDENCE), 4)
