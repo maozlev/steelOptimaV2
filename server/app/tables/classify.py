@@ -27,6 +27,7 @@ from app.vlm.prompts import (
 
 CLASSIFY_PAD_ROWS = 3  # rows of context above/below the grid in the VLM crop
 CLASSIFY_DPI = 300
+CLASSIFY_MAX_PX = 1024  # bigger crops put a 9B vision model into minutes-per-call
 
 # header keyword -> column role, matched on OCR'd header cells (case-insensitive,
 # substring). Ordered: first hit wins, more specific phrases first.
@@ -50,6 +51,21 @@ _HEADER_KEYWORDS: list[tuple[str, str]] = [
     ("level", "level"),
     ("notes", "other"),
 ]
+
+
+# The words that say "this is the table we need" (Maoz). A grid whose readable
+# header/context text contains none of these is not a materials table and never
+# earns a VLM call; one that contains them is processed even with the VLM down.
+MATERIAL_MARKERS = (
+    "weight", "kg", "mm", "cm", "length", "total", "qty", "quantity",
+    "pcs", "dia", "profile", "section", "size",
+    "משקל", "אורך", "קוטר", "כמות", "מידה", "פרופיל", 'סה"כ',
+)
+
+
+def has_material_markers(texts: list[str]) -> bool:
+    joined = fix_homoglyphs(" ".join(t for t in texts if t)).lower()
+    return any(marker in joined for marker in MATERIAL_MARKERS)
 
 
 @dataclass
@@ -84,7 +100,9 @@ def classify_with_vlm(
     page: fitz.Page, grid: TableGrid, client: OllamaVlmClient
 ) -> tuple[TableClassification | None, "object"]:
     """Returns (classification, VlmJsonResult) — the raw result feeds the audit row."""
-    png = render_region(page, _classify_crop_bbox(page, grid), dpi=CLASSIFY_DPI)
+    png = render_region(
+        page, _classify_crop_bbox(page, grid), dpi=CLASSIFY_DPI, max_px=CLASSIFY_MAX_PX
+    )
 
     def _validate(data: dict) -> None:
         verdict = TableVerdict.model_validate(data)

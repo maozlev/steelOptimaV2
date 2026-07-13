@@ -40,6 +40,7 @@ INK_PAD_PX = 12  # margin kept around the ink when cropping for recognition
 LINE_GAP_PX = 6  # blank rows separating text lines in a multi-line cell
 EMPTY_CONF = 0.99
 VLM_STRIP_MAX_ROWS = 10  # column-strip transcriptions per call
+VLM_MAX_PX = 1024  # bigger crops put a 9B vision model into minutes-per-call
 
 
 @dataclass
@@ -218,6 +219,21 @@ def read_strip_text(page: fitz.Page, bbox, dpi: int) -> list[str]:
     return out
 
 
+def _values_of(data) -> list | None:
+    """Ollama does not reliably enforce the format schema (see prompts.py) — the
+    model sometimes replies with a bare list instead of {"values": [...]}."""
+    if isinstance(data, dict) and isinstance(data.get("values"), list):
+        return data["values"]
+    if isinstance(data, list):
+        return data
+    return None
+
+
+def _require_values(data) -> None:
+    if _values_of(data) is None:
+        raise ValueError("no values array in reply")
+
+
 def vlm_read_column(
     page: fitz.Page,
     grid: TableGrid,
@@ -237,14 +253,16 @@ def vlm_read_column(
             grid.col_edges[col + 1],
             grid.row_edges[chunk[-1] + 1],
         )
-        png = render_region(page, bbox, dpi=dpi, pad_pt=1.0)
+        png = render_region(page, bbox, dpi=dpi, pad_pt=1.0, max_px=VLM_MAX_PX)
         result = client.chat_json(
-            png, transcribe_column_prompt(len(chunk)), ROW_VALUES_SCHEMA
+            png,
+            transcribe_column_prompt(len(chunk)),
+            ROW_VALUES_SCHEMA,
+            validate=_require_values,
         )
         calls += 1
         if result.ok:
-            values = result.data.get("values", [])
-            for row, value in zip(chunk, values):
+            for row, value in zip(chunk, _values_of(result.data) or []):
                 out[row] = str(value).strip()
     return out, calls
 
@@ -262,13 +280,16 @@ def vlm_read_row(
         grid.bbox[2],
         grid.row_edges[row + 1],
     )
-    png = render_region(page, bbox, dpi=dpi, pad_pt=1.0)
+    png = render_region(page, bbox, dpi=dpi, pad_pt=1.0, max_px=VLM_MAX_PX)
     result = client.chat_json(
-        png, transcribe_row_prompt(grid.n_cols), ROW_VALUES_SCHEMA
+        png,
+        transcribe_row_prompt(grid.n_cols),
+        ROW_VALUES_SCHEMA,
+        validate=_require_values,
     )
     if not result.ok:
         return None
-    values = [str(v).strip() for v in result.data.get("values", [])]
+    values = [str(v).strip() for v in (_values_of(result.data) or [])]
     if len(values) != grid.n_cols:
         return None
     return values

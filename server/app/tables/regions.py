@@ -23,13 +23,17 @@ def render_region(
     bbox: tuple[float, float, float, float],
     dpi: int = REGION_DPI,
     pad_pt: float = PAD_PT,
+    max_px: int = MAX_REGION_PX,
 ) -> bytes:
-    """PNG of a display-space rect, long edge clamped to MAX_REGION_PX."""
+    """PNG of a display-space rect, long edge clamped to max_px.
+
+    VLM callers must pass a small max_px (~1000): a 2300px crop makes a 9B
+    vision model take minutes per call instead of seconds."""
     rect = fitz.Rect(*bbox) + (-pad_pt, -pad_pt, pad_pt, pad_pt)
     rect = rect & page.rect  # never ask for pixels off the sheet
     zoom = dpi / 72.0
     long_edge = max(rect.width, rect.height, 1.0)
-    zoom = min(zoom, MAX_REGION_PX / long_edge)
+    zoom = min(zoom, max_px / long_edge)
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=rect)
     return pix.tobytes("png")
 

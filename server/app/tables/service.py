@@ -30,6 +30,7 @@ from app.tables.classify import (
     classify_heuristic,
     classify_with_vlm,
     data_row_indices,
+    has_material_markers,
     read_declared_total_weight,
 )
 from app.tables.grid import TableGrid, detect_grids
@@ -143,8 +144,6 @@ def _process_table(
     dpi = settings.table_ocr_dpi
     vlm_budget = settings.table_vlm_max_calls
 
-    # ---- classify: one VLM question, heuristic as fallback and cross-check
-    cls: TableClassification | None = None
     table_row = MaterialTable(
         page_id=page_row.id,
         job_id=job.id,
@@ -155,32 +154,26 @@ def _process_table(
     db.add(table_row)
     db.flush()
 
-    if client is not None:
-        cls, vlm_result = classify_with_vlm(page, grid, client)
-        _record_vlm_call(db, job.id, table_row.id, "table_classify", vlm_result)
-        vlm_budget -= 1
-
-    # OCR candidate header rows for the heuristic: first/last grid row, plus the
-    # strips just above/below the grid (the NCD BOM's header is OUTSIDE the grid)
+    # OCR candidate header rows: first/last grid row, plus the strips just
+    # above/below the grid (the NCD BOM's header is OUTSIDE the grid)
     image = cells_mod.TableImage(page, grid, dpi)
 
-    def _grid_row_texts(r: int) -> list[str]:
+    def _grid_row_reads(r: int) -> list[cells_mod.CellRead]:
         return [
-            cells_mod.ocr_cell(image.cell_image(r, c)).value or ""
-            for c in range(grid.n_cols)
+            cells_mod.ocr_cell(image.cell_image(r, c)) for c in range(grid.n_cols)
         ]
 
     heights = [b - a for a, b in zip(grid.row_edges, grid.row_edges[1:])]
     med = sorted(heights)[len(heights) // 2]
 
-    def _strip_texts(above: bool) -> list[str]:
+    def _strip_reads(above: bool) -> list[cells_mod.CellRead]:
         y0, y1 = (
             (grid.bbox[1] - 1.9 * med, grid.bbox[1] - 0.05)
             if above
             else (grid.bbox[3] + 0.05, grid.bbox[3] + 1.9 * med)
         )
         if y1 <= y0:
-            return [""] * grid.n_cols
+            return [cells_mod.CellRead() for _ in range(grid.n_cols)]
         strip = TableGrid(
             bbox=(grid.bbox[0], y0, grid.bbox[2], y1),
             col_edges=grid.col_edges,
@@ -188,25 +181,62 @@ def _process_table(
         )
         strip_image = cells_mod.TableImage(page, strip, dpi)
         return [
-            cells_mod.ocr_cell(strip_image.cell_image(0, c)).value or ""
+            cells_mod.ocr_cell(strip_image.cell_image(0, c))
             for c in range(grid.n_cols)
         ]
 
-    first_texts = _grid_row_texts(0)
-    last_texts = _grid_row_texts(grid.n_rows - 1)
+    candidates = [
+        ("top", 1, _grid_row_reads(0)),
+        ("bottom", 1, _grid_row_reads(grid.n_rows - 1)),
+        ("top", 0, _strip_reads(above=True)),
+        ("bottom", 0, _strip_reads(above=False)),
+    ]
+    texts_of = lambda reads: [c.value or "" for c in reads]  # noqa: E731
+    first_texts = texts_of(candidates[0][2])
+    last_texts = texts_of(candidates[1][2])
     heuristic = classify_heuristic(
-        [
-            ("top", 1, first_texts),
-            ("bottom", 1, last_texts),
-            ("top", 0, _strip_texts(above=True)),
-            ("bottom", 0, _strip_texts(above=False)),
-        ]
+        [(pos, hr, texts_of(reads)) for pos, hr, reads in candidates]
     )
-    if cls is None:
-        cls = heuristic
-    elif cls.header_rows > 0:
-        # deterministic cross-check on the VLM's header claim: the NCD BOM prints
-        # its header BELOW and OUTSIDE the grid, and a model looking at the padded
+
+    # --- the gate (Maoz): words like weight/kg/mm/length/total say "this is the
+    # table we need". Grids whose readable context has none of them are junk and
+    # never earn a VLM call; the VLM is only consulted when the OCR could not
+    # read the header ink (Hebrew) and so cannot testify either way.
+    all_reads = [c for _, _, reads in candidates for c in reads]
+    inked = [c for c in all_reads if c.source != "empty"]
+    read_ok = [c for c in inked if (c.value or "").strip()]
+    readable = bool(inked) and len(read_ok) / len(inked) >= 0.5
+    markers = has_material_markers([c.value or "" for c in all_reads])
+
+    cls: TableClassification | None = None
+    if heuristic.kind == "materials":
+        cls = heuristic  # printed headers identified the table — no VLM needed
+    elif markers:
+        cls = heuristic  # marker words but roles unclear -> VLM may sharpen them
+    elif readable or not inked:
+        # header text was readable and contains none of the marker words:
+        # a coordinate list, revision history or title block. Skip cheaply.
+        cls = TableClassification(
+            kind="other",
+            column_roles=["other"] * grid.n_cols,
+            header_rows=0,
+            confidence=0.4,
+            source="heuristic",
+        )
+
+    if cls is None or (cls.kind in ("unknown", "materials") and cls.confidence < 0.5):
+        if client is not None:
+            vlm_cls, vlm_result = classify_with_vlm(page, grid, client)
+            _record_vlm_call(db, job.id, table_row.id, "table_classify", vlm_result)
+            vlm_budget -= 1
+            if vlm_cls is not None:
+                cls = vlm_cls
+        if cls is None:
+            cls = heuristic
+
+    if cls.header_rows > 0:
+        # deterministic cross-check on the header claim: the NCD BOM prints its
+        # header BELOW and OUTSIDE the grid, and a model looking at the padded
         # crop can't tell. A real header row is words; a data row is numbers —
         # if the claimed header row is mostly numeric, the header isn't in the grid
         claimed = first_texts if cls.header_position == "top" else last_texts
