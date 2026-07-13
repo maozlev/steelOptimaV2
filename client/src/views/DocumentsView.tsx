@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
-import { buildGroups, getSummaryIncludes, loadHiddenKeys, setSummaryIncludes } from "../api/bom";
-import type { CropIn, CutoutOut, DocumentDetailOut, DocumentOut, HealthOut } from "../api/types";
+import { getSummaryIncludes, loadHiddenKeys, setSummaryIncludes } from "../api/bom";
+import { formatLength } from "../components/BomPanel";
+import type { CropIn, DocumentBom, DocumentDetailOut, DocumentOut, HealthOut } from "../api/types";
 import { track } from "../telemetry";
 import HealthBadge from "../components/HealthBadge";
 import IngestionPreview from "../components/IngestionPreview";
@@ -12,33 +13,51 @@ interface HoverCard {
   rect: DOMRect;
 }
 
-function BomTooltip({ doc, cutouts }: { doc: DocumentOut; cutouts: CutoutOut[] | undefined }) {
-  if (!cutouts) {
+function BomTooltip({ doc, bom }: { doc: DocumentOut; bom: DocumentBom | undefined }) {
+  if (!bom) {
     return <div className="py-3 text-center text-xs text-zinc-500">Loading…</div>;
   }
   const hidden = loadHiddenKeys(doc.id);
-  const groups = buildGroups(cutouts).filter((g) => !hidden.has(g.key) && g.active.length > 0);
-  if (groups.length === 0) {
+  const rows = bom.rows.filter((r) => !hidden.has(r.key) && r.qty > 0);
+  if (rows.length === 0) {
     return <div className="py-3 text-center text-xs text-zinc-500">No cutouts yet</div>;
   }
+  const cut = rows.reduce((s, r) => s + r.cut_length_total_mm, 0);
   return (
     <table className="w-full text-xs">
       <thead>
         <tr className="text-left text-zinc-500">
           <th className="pb-1 pr-3 font-normal">Shape</th>
           <th className="pb-1 pr-3 font-normal">Dimensions</th>
-          <th className="pb-1 text-right font-normal">Qty</th>
+          <th className="pb-1 pr-3 text-right font-normal">Qty</th>
+          <th className="pb-1 text-right font-normal">Cut</th>
         </tr>
       </thead>
       <tbody>
-        {groups.map((g) => (
-          <tr key={g.key} className="border-t border-zinc-800">
-            <td className="py-0.5 pr-3 font-medium text-zinc-200">{g.shape}</td>
-            <td className="py-0.5 pr-3 text-zinc-400">{g.dims}</td>
-            <td className="py-0.5 text-right tabular-nums text-zinc-200">{g.active.length}×</td>
+        {rows.map((r) => (
+          <tr key={r.key} className="border-t border-zinc-800">
+            <td className="py-0.5 pr-3 font-medium text-zinc-200">{r.shape_label}</td>
+            <td className="py-0.5 pr-3 text-zinc-400">{r.dims}</td>
+            <td className="py-0.5 pr-3 text-right tabular-nums text-zinc-200">{r.qty}×</td>
+            <td className="py-0.5 text-right tabular-nums text-zinc-400">
+              {formatLength(r.cut_length_total_mm)}
+            </td>
           </tr>
         ))}
       </tbody>
+      <tfoot>
+        <tr className="border-t border-zinc-700 font-medium text-zinc-200">
+          <td className="pt-1 pr-3" colSpan={2}>
+            Total
+          </td>
+          <td className="pt-1 pr-3 text-right tabular-nums">
+            {rows.reduce((s, r) => s + r.qty, 0)}×
+          </td>
+          <td className="pt-1 text-right tabular-nums text-emerald-300">
+            {formatLength(cut)}
+          </td>
+        </tr>
+      </tfoot>
     </table>
   );
 }
@@ -57,7 +76,7 @@ export default function DocumentsView({
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [hoverCard, setHoverCard] = useState<HoverCard | null>(null);
-  const [cutoutCache, setCutoutCache] = useState<Map<number, CutoutOut[]>>(new Map());
+  const [bomCache, setBomCache] = useState<Map<number, DocumentBom>>(new Map());
   const [summaryIncludes, setSummaryIncludesState] = useState<Set<number>>(
     () => getSummaryIncludes() ?? new Set(),
   );
@@ -87,11 +106,11 @@ export default function DocumentsView({
     if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
     hoverTimer.current = window.setTimeout(() => {
       setHoverCard({ docId, rect });
-      if (!cutoutCache.has(docId)) {
+      if (!bomCache.has(docId)) {
         api
-          .listDocumentCutouts(docId)
-          .then((cs) => setCutoutCache((prev) => new Map([...prev, [docId, cs]])))
-          .catch(() => setCutoutCache((prev) => new Map([...prev, [docId, []]])));
+          .getDocumentBom(docId)
+          .then((b) => setBomCache((prev) => new Map([...prev, [docId, b]])))
+          .catch(() => {});
       }
     }, 400);
   }
@@ -117,7 +136,11 @@ export default function DocumentsView({
     setError(null);
     setConfirmDelete(null);
     if (hoverCard?.docId === id) setHoverCard(null);
-    setCutoutCache((prev) => { const next = new Map(prev); next.delete(id); return next; });
+    setBomCache((prev) => {
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
     try {
       await api.deleteDocument(id);
       refresh();
@@ -283,7 +306,7 @@ export default function DocumentsView({
           </div>
           <BomTooltip
             doc={docs.find((d) => d.id === hoverCard.docId)!}
-            cutouts={cutoutCache.get(hoverCard.docId)}
+            bom={bomCache.get(hoverCard.docId)}
           />
         </div>
       )}

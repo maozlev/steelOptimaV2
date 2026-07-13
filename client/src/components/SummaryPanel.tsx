@@ -6,6 +6,7 @@ function StatRow({ name, b }: { name: string; b: SummaryBucket }) {
   return (
     <tr className="border-t border-zinc-800">
       <td className="py-1 pr-3 text-zinc-300">{name}</td>
+      <td className="px-2 text-center text-zinc-400">{b.total}</td>
       <td className="px-2 text-center">{b.pending}</td>
       <td className="px-2 text-center text-emerald-400">{b.approved}</td>
       <td className="px-2 text-center text-red-400">{b.rejected}</td>
@@ -17,12 +18,36 @@ function StatRow({ name, b }: { name: string; b: SummaryBucket }) {
   );
 }
 
-export default function SummaryPanel({ onClose }: { onClose: () => void }) {
+function Head({ first }: { first: string }) {
+  return (
+    <thead>
+      <tr className="text-zinc-500">
+        <th className="pb-1 pr-3 text-left">{first}</th>
+        <th>total</th>
+        <th>pending</th>
+        <th>appr</th>
+        <th>rej</th>
+        <th>edit</th>
+        <th>rate</th>
+      </tr>
+    </thead>
+  );
+}
+
+export default function SummaryPanel({
+  docId,
+  onClose,
+}: {
+  /** Scopes the stats to one document. Without it the panel silently reports the
+   *  whole database, which reads as this document's numbers and is not. */
+  docId?: number;
+  onClose: () => void;
+}) {
   const [summary, setSummary] = useState<TelemetrySummary | null>(null);
 
   useEffect(() => {
-    api.telemetrySummary().then(setSummary).catch(() => {});
-  }, []);
+    api.telemetrySummary(docId).then(setSummary).catch(() => {});
+  }, [docId]);
 
   return (
     <div
@@ -34,7 +59,12 @@ export default function SummaryPanel({ onClose }: { onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Telemetry summary</h2>
+          <div>
+            <h2 className="text-lg font-semibold">Telemetry summary</h2>
+            <p className="text-xs text-zinc-500">
+              {docId == null ? "All documents" : "This document only"}
+            </p>
+          </div>
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
             ✕
           </button>
@@ -48,16 +78,7 @@ export default function SummaryPanel({ onClose }: { onClose: () => void }) {
                 Approve rate by source
               </h3>
               <table className="w-full">
-                <thead>
-                  <tr className="text-zinc-500">
-                    <th className="pb-1 pr-3 text-left">source</th>
-                    <th>pending</th>
-                    <th>appr</th>
-                    <th>rej</th>
-                    <th>edit</th>
-                    <th>rate</th>
-                  </tr>
-                </thead>
+                <Head first="source" />
                 <tbody>
                   {Object.entries(summary.by_source).map(([source, b]) => (
                     <StatRow key={source} name={source} b={b} />
@@ -71,16 +92,7 @@ export default function SummaryPanel({ onClose }: { onClose: () => void }) {
                 {summary.escalation_threshold})
               </h3>
               <table className="w-full">
-                <thead>
-                  <tr className="text-zinc-500">
-                    <th className="pb-1 pr-3 text-left">bucket</th>
-                    <th>pending</th>
-                    <th>appr</th>
-                    <th>rej</th>
-                    <th>edit</th>
-                    <th>rate</th>
-                  </tr>
-                </thead>
+                <Head first="bucket" />
                 <tbody>
                   {summary.by_confidence.map((b) => (
                     <StatRow key={b.bucket} name={b.bucket!} b={b} />

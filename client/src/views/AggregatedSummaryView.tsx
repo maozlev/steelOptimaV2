@@ -1,41 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import {
-  buildGroups,
-  getSummaryIncludes,
-  loadHiddenKeys,
-  setSummaryIncludes,
-} from "../api/bom";
-import type { CutoutOut, DocumentOut } from "../api/types";
+import { getSummaryIncludes, setSummaryIncludes } from "../api/bom";
+import { formatLength } from "../components/BomPanel";
+import type { AggregateBom, BomRow } from "../api/types";
+
+/** RFC4180: a field containing a quote escapes it by doubling. The old hand-rolled
+ *  writer did not, so a filename with a quote in it corrupted the whole file. */
+function csvCell(value: string | number): string {
+  const s = String(value);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
 
 export default function AggregatedSummaryView({ onBack }: { onBack: () => void }) {
-  const [docs, setDocs] = useState<DocumentOut[]>([]);
-  const [cutoutsByDoc, setCutoutsByDoc] = useState<Map<number, CutoutOut[]>>(new Map());
+  const [bom, setBom] = useState<AggregateBom | null>(null);
   const [loading, setLoading] = useState(true);
   const [included, setIncluded] = useState<Set<number>>(new Set());
 
   useEffect(() => {
-    api.listDocuments().then((allDocs) => {
-      setDocs(allDocs);
-      const approved = allDocs.filter((d) => d.status === "approved");
-      const saved = getSummaryIncludes();
-      // First visit: include all approved docs by default
-      if (saved === null) {
-        const all = new Set(approved.map((d) => d.id));
-        setIncluded(all);
-        setSummaryIncludes(all);
-      } else {
-        setIncluded(saved);
-      }
-      Promise.all(
-        approved.map((d) =>
-          api.listDocumentCutouts(d.id).then((cs) => [d.id, cs] as const).catch(() => [d.id, []] as const),
-        ),
-      ).then((pairs) => {
-        setCutoutsByDoc(new Map(pairs));
-        setLoading(false);
-      });
-    });
+    api
+      .getAggregateBom()
+      .then((b) => {
+        setBom(b);
+        const saved = getSummaryIncludes();
+        // First visit: include every approved document.
+        const next = saved ?? new Set(b.documents.map((d) => d.id));
+        if (saved === null) setSummaryIncludes(next);
+        setIncluded(next);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   function toggleInclude(docId: number) {
@@ -48,43 +41,46 @@ export default function AggregatedSummaryView({ onBack }: { onBack: () => void }
     });
   }
 
-  // Aggregate BOM across all included approved docs, respecting per-doc hidden keys
-  const aggregated = useMemo(() => {
-    type Row = { shape: string; dims: string; qty: number; docNames: string[] };
-    const totals = new Map<string, Row>();
-    for (const doc of docs) {
-      if (doc.status !== "approved" || !included.has(doc.id)) continue;
-      const cutouts = cutoutsByDoc.get(doc.id) ?? [];
-      const hidden = loadHiddenKeys(doc.id);
-      const groups = buildGroups(cutouts).filter(
-        (g) => !hidden.has(g.key) && g.active.length > 0,
-      );
-      for (const g of groups) {
-        const existing = totals.get(g.key);
-        if (existing) {
-          existing.qty += g.active.length;
-          existing.docNames.push(doc.filename);
-        } else {
-          totals.set(g.key, {
-            shape: g.shape,
-            dims: g.dims,
-            qty: g.active.length,
-            docNames: [doc.filename],
-          });
-        }
-      }
-    }
-    return [...totals.values()].sort((a, b) => b.qty - a.qty);
-  }, [docs, cutoutsByDoc, included]);
+  const docs = bom?.documents ?? [];
+  const includedNames = useMemo(
+    () => new Set(docs.filter((d) => included.has(d.id)).map((d) => d.filename)),
+    [docs, included],
+  );
 
-  const totalQty = aggregated.reduce((s, r) => s + r.qty, 0);
-  const approvedDocs = docs.filter((d) => d.status === "approved");
+  // The server rolls up every approved document; the checkboxes then narrow that
+  // to the ones you want in this work order.
+  const rows: BomRow[] = useMemo(
+    () =>
+      (bom?.rows ?? []).filter((r) =>
+        (r.documents ?? []).some((n) => includedNames.has(n)),
+      ),
+    [bom, includedNames],
+  );
+
+  const totalQty = rows.reduce((s, r) => s + r.qty, 0);
+  const totalCut = rows.reduce((s, r) => s + r.cut_length_total_mm, 0);
 
   function exportCsv() {
-    const lines = ["Shape,Dimensions,Quantity,Documents"];
-    for (const row of aggregated) {
-      lines.push(`"${row.shape}","${row.dims}",${row.qty},"${[...new Set(row.docNames)].join("; ")}"`);
+    const lines = [
+      ["Shape", "Dimensions", "Quantity", "Cut length each (mm)", "Cut length total (mm)", "Documents"]
+        .map(csvCell)
+        .join(","),
+    ];
+    for (const r of rows) {
+      lines.push(
+        [
+          r.shape_label,
+          r.dims,
+          r.qty,
+          r.cut_length_each_mm,
+          r.cut_length_total_mm,
+          [...new Set(r.documents ?? [])].join("; "),
+        ]
+          .map(csvCell)
+          .join(","),
+      );
     }
+    lines.push(["TOTAL", "", totalQty, "", totalCut.toFixed(2), ""].map(csvCell).join(","));
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -104,12 +100,14 @@ export default function AggregatedSummaryView({ onBack }: { onBack: () => void }
         </button>
         <div>
           <h1 className="text-lg font-semibold">Aggregated BOM Summary</h1>
-          <p className="text-xs text-zinc-500">Combined bill of materials from approved drawings</p>
+          <p className="text-xs text-zinc-500">
+            Combined bill of materials from approved drawings
+          </p>
         </div>
         <div className="ml-auto flex gap-2">
           <button
             onClick={exportCsv}
-            disabled={aggregated.length === 0}
+            disabled={rows.length === 0}
             className="rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700 disabled:opacity-40"
           >
             Export CSV
@@ -118,16 +116,15 @@ export default function AggregatedSummaryView({ onBack }: { onBack: () => void }
       </header>
 
       <div className="flex min-h-0 flex-1">
-        {/* Sidebar: document selector */}
         <aside className="w-60 flex-shrink-0 overflow-auto border-r border-zinc-800 p-4">
           <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-500">
             Approved documents
           </h2>
-          {approvedDocs.length === 0 ? (
+          {docs.length === 0 ? (
             <p className="text-xs text-zinc-600">No approved documents yet.</p>
           ) : (
             <ul className="space-y-2">
-              {approvedDocs.map((d) => (
+              {docs.map((d) => (
                 <li key={d.id} className="flex items-start gap-2">
                   <input
                     type="checkbox"
@@ -150,15 +147,14 @@ export default function AggregatedSummaryView({ onBack }: { onBack: () => void }
           )}
         </aside>
 
-        {/* Main: aggregated table */}
         <main className="flex-1 overflow-auto p-6">
           {loading ? (
             <p className="text-sm text-zinc-500">Loading cutout data…</p>
-          ) : aggregated.length === 0 ? (
+          ) : rows.length === 0 ? (
             <p className="text-sm text-zinc-500">
-              {approvedDocs.length === 0
+              {docs.length === 0
                 ? "No approved documents. Finalize a document from the workspace to include it here."
-                : "No visible cutouts — check the document selection or BOM visibility settings."}
+                : "No cutouts — check the document selection."}
             </p>
           ) : (
             <table className="w-full border-collapse text-sm">
@@ -167,22 +163,29 @@ export default function AggregatedSummaryView({ onBack }: { onBack: () => void }
                   <th className="pb-2 pr-6 font-normal">Shape</th>
                   <th className="pb-2 pr-6 font-normal">Dimensions</th>
                   <th className="pb-2 pr-6 text-right font-normal">Qty</th>
+                  <th className="pb-2 pr-6 text-right font-normal">Cut ea.</th>
+                  <th className="pb-2 pr-6 text-right font-normal">Cut total</th>
                   <th className="pb-2 font-normal">From</th>
                 </tr>
               </thead>
               <tbody>
-                {aggregated.map((row) => (
-                  <tr
-                    key={`${row.shape}|${row.dims}`}
-                    className="border-b border-zinc-800/60"
-                  >
-                    <td className="py-2.5 pr-6 font-medium text-zinc-200">{row.shape}</td>
+                {rows.map((row) => (
+                  <tr key={row.key} className="border-b border-zinc-800/60">
+                    <td className="py-2.5 pr-6 font-medium text-zinc-200">
+                      {row.shape_label}
+                    </td>
                     <td className="py-2.5 pr-6 text-zinc-400">{row.dims}</td>
-                    <td className="py-2.5 pr-6 text-right tabular-nums font-semibold text-zinc-100">
+                    <td className="py-2.5 pr-6 text-right font-semibold tabular-nums text-zinc-100">
                       {row.qty}×
                     </td>
+                    <td className="py-2.5 pr-6 text-right tabular-nums text-zinc-500">
+                      {formatLength(row.cut_length_each_mm)}
+                    </td>
+                    <td className="py-2.5 pr-6 text-right tabular-nums text-zinc-300">
+                      {formatLength(row.cut_length_total_mm)}
+                    </td>
                     <td className="py-2.5 text-xs text-zinc-500">
-                      {[...new Set(row.docNames)].join(", ")}
+                      {[...new Set(row.documents ?? [])].join(", ")}
                     </td>
                   </tr>
                 ))}
@@ -192,10 +195,14 @@ export default function AggregatedSummaryView({ onBack }: { onBack: () => void }
                   <td colSpan={2} className="pt-3 text-sm font-medium text-zinc-400">
                     Total
                   </td>
-                  <td className="pt-3 text-right tabular-nums text-lg font-bold text-zinc-100">
+                  <td className="pt-3 pr-6 text-right text-lg font-bold tabular-nums text-zinc-100">
                     {totalQty}×
                   </td>
                   <td />
+                  <td className="pt-3 pr-6 text-right text-lg font-bold tabular-nums text-emerald-300">
+                    {formatLength(totalCut)}
+                  </td>
+                  <td className="pt-3 text-xs text-zinc-500">total cut length</td>
                 </tr>
               </tfoot>
             </table>

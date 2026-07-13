@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import cutouts, documents, export, health, jobs, telemetry
+from app.api import bom, cutouts, documents, export, health, jobs, telemetry
 from app.config import settings
 from app.db import session as db_session
 from app.db.models import Base, ExtractionJob
@@ -43,6 +43,7 @@ app.include_router(documents.router)
 app.include_router(health.router)
 app.include_router(jobs.router)
 app.include_router(cutouts.router)
+app.include_router(bom.router)
 app.include_router(export.router)
 app.include_router(telemetry.router)
 app.include_router(events.router)

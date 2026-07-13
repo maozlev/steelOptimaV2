@@ -1,8 +1,10 @@
 import type {
+  AggregateBom,
   ConfigOut,
   CropIn,
   CutoutKind,
   CutoutOut,
+  DocumentBom,
   DocumentDetailOut,
   DocumentOut,
   FinalizeOut,
@@ -81,7 +83,19 @@ export const api = {
     request<Record<string, unknown>>(`/api/documents/${docId}/export`),
   listDocumentCutouts: (docId: number) =>
     request<CutoutOut[]>(`/api/documents/${docId}/cutouts`),
-  telemetrySummary: () => request<TelemetrySummary>("/api/telemetry/summary"),
+
+  // BOM rows (shape, size, qty, cut length) are computed server-side so the
+  // workspace, the aggregate view and the export can never disagree.
+  getDocumentBom: (docId: number) =>
+    request<DocumentBom>(`/api/documents/${docId}/bom`),
+  getAggregateBom: () => request<AggregateBom>("/api/bom/aggregate"),
+
+  telemetrySummary: (docId?: number) =>
+    request<TelemetrySummary>(
+      docId == null
+        ? "/api/telemetry/summary"
+        : `/api/telemetry/summary?document_id=${docId}`,
+    ),
   postTelemetry: (batch: {
     session_id: string;
     events: { type: string; entity_id?: number; payload?: object }[];

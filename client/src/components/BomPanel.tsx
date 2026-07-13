@@ -1,6 +1,11 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { buildGroups, loadHiddenKeys, saveHiddenKeys, type BomGroup } from "../api/bom";
-import type { CutoutOut } from "../api/types";
+import { loadHiddenKeys, saveHiddenKeys } from "../api/bom";
+import type { BomRow, BomTotals, CutoutOut } from "../api/types";
+
+/** Cut length reads in mm up close and in metres once it stops being a hole. */
+export function formatLength(mm: number): string {
+  return mm >= 1000 ? `${(mm / 1000).toFixed(2)} m` : `${mm.toFixed(1)} mm`;
+}
 
 function EyeIcon({ open }: { open: boolean }) {
   return open ? (
@@ -19,6 +24,7 @@ function EyeIcon({ open }: { open: boolean }) {
 
 export default function BomPanel({
   docId,
+  rows,
   cutouts,
   finalizeThreshold,
   locked,
@@ -30,6 +36,8 @@ export default function BomPanel({
   onFinalize,
 }: {
   docId: number;
+  rows: BomRow[];
+  /** Every cutout in the document, across all pages — drives the finalize preview. */
   cutouts: CutoutOut[];
   finalizeThreshold: number;
   locked: boolean;
@@ -45,16 +53,23 @@ export default function BomPanel({
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => loadHiddenKeys(docId));
   const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
 
-  // Persist hidden keys whenever they change
   useEffect(() => {
     saveHiddenKeys(docId, hiddenKeys);
   }, [docId, hiddenKeys]);
 
-  const groups = useMemo(() => buildGroups(cutouts), [cutouts]);
-  // Only show groups with at least one active (non-rejected) cutout
-  const activeGroups = groups.filter((g) => g.active.length > 0);
-  const visibleGroups = activeGroups.filter((g) => !hiddenKeys.has(g.key));
-  const hiddenCount = hiddenKeys.size;
+  const byId = useMemo(() => new Map(cutouts.map((c) => [c.id, c])), [cutouts]);
+  const visibleRows = rows.filter((r) => !hiddenKeys.has(r.key));
+  const hiddenCount = rows.filter((r) => hiddenKeys.has(r.key)).length;
+
+  // Totals reflect what is actually shown, so hiding a row visibly changes them.
+  const shownTotals: BomTotals = useMemo(
+    () => ({
+      qty: visibleRows.reduce((s, r) => s + r.qty, 0),
+      cut_length_mm: visibleRows.reduce((s, r) => s + r.cut_length_total_mm, 0),
+      pending_qty: visibleRows.reduce((s, r) => s + r.pending_qty, 0),
+    }),
+    [visibleRows],
+  );
 
   const willApprove = cutouts.filter(
     (c) => c.status === "pending" && c.confidence >= finalizeThreshold,
@@ -63,15 +78,15 @@ export default function BomPanel({
     (c) => c.status === "pending" && c.confidence < finalizeThreshold,
   ).length;
 
-  function toggleVisibility(g: BomGroup, e: React.MouseEvent) {
+  function toggleVisibility(row: BomRow, e: React.MouseEvent) {
     e.stopPropagation();
     setHiddenKeys((prev) => {
       const next = new Set(prev);
-      if (next.has(g.key)) {
-        next.delete(g.key);
+      if (next.has(row.key)) {
+        next.delete(row.key);
       } else {
-        next.add(g.key);
-        if (expandedKey === g.key) {
+        next.add(row.key);
+        if (expandedKey === row.key) {
           setExpandedKey(null);
           onHighlight(null);
         }
@@ -80,34 +95,37 @@ export default function BomPanel({
     });
   }
 
-  function groupStatus(g: BomGroup) {
-    const pending = g.active.filter((c) => c.status === "pending");
-    if (pending.length === 0) {
-      if (g.active.length && g.active.every((c) => c.source === "manual"))
+  function rowStatus(row: BomRow) {
+    if (row.pending_qty === 0) {
+      const members = row.cutout_ids.map((id) => byId.get(id)).filter(Boolean);
+      if (members.length && members.every((c) => c!.source === "manual"))
         return <span className="text-violet-300">✓ Manually added</span>;
       return <span className="text-emerald-300">✓ Verified</span>;
     }
-    const lowConf = pending.some((c) => c.confidence < finalizeThreshold);
+    const lowConf = row.cutout_ids.some((id) => {
+      const c = byId.get(id);
+      return c?.status === "pending" && c.confidence < finalizeThreshold;
+    });
     return (
       <span className={lowConf ? "text-red-400" : "text-amber-300"}>
-        ▲ {pending.length} under review
+        ▲ {row.pending_qty} under review
       </span>
     );
   }
 
-  function toggleGroup(g: BomGroup) {
-    const next = expandedKey === g.key ? null : g.key;
+  function toggleRow(row: BomRow) {
+    const next = expandedKey === row.key ? null : row.key;
     setExpandedKey(next);
-    onHighlight(next ? g.active.map((c) => c.id) : null);
+    onHighlight(next ? row.cutout_ids : null);
   }
 
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-300">
-        Bill of Materials — summary
+        Bill of Materials — whole document
       </div>
       <div className="flex-1 overflow-auto">
-        {activeGroups.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="p-4 text-center text-xs text-zinc-600">
             No cutouts yet — run extraction first.
           </p>
@@ -116,27 +134,29 @@ export default function BomPanel({
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-zinc-950 text-left text-zinc-500">
                 <tr>
-                  <th className="w-16 px-2 py-1.5 font-normal" />
+                  <th className="w-14 px-2 py-1.5 font-normal" />
                   <th className="px-1 py-1.5 font-normal">Shape</th>
                   <th className="px-1 py-1.5 font-normal">Dimensions</th>
                   <th className="px-1 py-1.5 text-right font-normal">Qty</th>
+                  <th className="px-1 py-1.5 text-right font-normal">Cut ea.</th>
+                  <th className="px-1 py-1.5 text-right font-normal">Cut total</th>
                   <th className="px-3 py-1.5 text-right font-normal">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleGroups.map((g) => (
-                  <Fragment key={g.key}>
-                    {confirmDeleteKey === g.key ? (
+                {visibleRows.map((row) => (
+                  <Fragment key={row.key}>
+                    {confirmDeleteKey === row.key ? (
                       <tr className="border-t border-zinc-800/60 bg-red-950/30">
-                        <td colSpan={3} className="px-3 py-2 text-xs text-red-300">
-                          Reject all {g.active.length} cutouts in this group?
+                        <td colSpan={4} className="px-3 py-2 text-xs text-red-300">
+                          Reject all {row.qty} cutouts in this group?
                         </td>
-                        <td colSpan={2} className="px-3 py-2 text-right">
+                        <td colSpan={3} className="px-3 py-2 text-right">
                           <div className="flex justify-end gap-1">
                             <button
                               onClick={() => {
                                 setConfirmDeleteKey(null);
-                                onRejectGroup(g.active.map((c) => c.id));
+                                onRejectGroup(row.cutout_ids);
                               }}
                               className="rounded bg-red-700 px-2 py-0.5 text-xs font-medium hover:bg-red-600"
                             >
@@ -153,15 +173,15 @@ export default function BomPanel({
                       </tr>
                     ) : (
                       <tr
-                        onClick={() => toggleGroup(g)}
+                        onClick={() => toggleRow(row)}
                         className={`cursor-pointer border-t border-zinc-800/60 hover:bg-zinc-900 ${
-                          expandedKey === g.key ? "bg-zinc-800/60" : ""
+                          expandedKey === row.key ? "bg-zinc-800/60" : ""
                         }`}
                       >
                         <td className="px-2 py-2">
                           <div className="flex gap-1.5">
                             <button
-                              onClick={(e) => toggleVisibility(g, e)}
+                              onClick={(e) => toggleVisibility(row, e)}
                               title="Hide from summary"
                               className="text-zinc-500 hover:text-zinc-200"
                             >
@@ -171,7 +191,7 @@ export default function BomPanel({
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setConfirmDeleteKey(g.key);
+                                  setConfirmDeleteKey(row.key);
                                 }}
                                 title="Reject entire group"
                                 className="text-zinc-600 hover:text-red-400"
@@ -187,50 +207,75 @@ export default function BomPanel({
                             )}
                           </div>
                         </td>
-                        <td className="px-1 py-2 font-medium text-zinc-200">{g.shape}</td>
-                        <td className="px-1 py-2 text-zinc-400">{g.dims}</td>
+                        <td className="px-1 py-2 font-medium text-zinc-200">{row.shape_label}</td>
+                        <td className="px-1 py-2 text-zinc-400">{row.dims}</td>
                         <td className="px-1 py-2 text-right tabular-nums text-zinc-200">
-                          {g.active.length}x
+                          {row.qty}x
                         </td>
-                        <td className="px-3 py-2 text-right">{groupStatus(g)}</td>
+                        <td className="px-1 py-2 text-right tabular-nums text-zinc-500">
+                          {formatLength(row.cut_length_each_mm)}
+                        </td>
+                        <td className="px-1 py-2 text-right tabular-nums text-zinc-300">
+                          {formatLength(row.cut_length_total_mm)}
+                        </td>
+                        <td className="px-3 py-2 text-right">{rowStatus(row)}</td>
                       </tr>
                     )}
-                    {expandedKey === g.key && confirmDeleteKey !== g.key &&
-                      [...g.active, ...g.rejected].map((c) => (
-                        <tr key={`m-${c.id}`} className="bg-zinc-900/50 text-zinc-400">
-                          <td className="py-1 pl-8 pr-1" colSpan={3}>
-                            <span className={c.status === "rejected" ? "line-through" : ""}>
-                              #{c.id} · {c.status} · {c.source}
-                            </span>
-                          </td>
-                          <td className="px-1 py-1 text-right tabular-nums">
-                            {c.confidence.toFixed(2)}
-                          </td>
-                          <td className="px-3 py-1 text-right">
-                            {!locked &&
-                              (c.status === "rejected" ? (
-                                <button
-                                  disabled={busy}
-                                  onClick={() => onRestore(c.id)}
-                                  className="rounded bg-zinc-800 px-1.5 py-0.5 hover:bg-zinc-700 disabled:opacity-50"
-                                >
-                                  restore
-                                </button>
-                              ) : (
-                                <button
-                                  disabled={busy}
-                                  onClick={() => onReject(c.id)}
-                                  className="rounded bg-zinc-800 px-1.5 py-0.5 text-red-300 hover:bg-zinc-700 disabled:opacity-50"
-                                >
-                                  remove
-                                </button>
-                              ))}
-                          </td>
-                        </tr>
-                      ))}
+                    {expandedKey === row.key && confirmDeleteKey !== row.key &&
+                      [...row.cutout_ids, ...row.rejected_ids]
+                        .map((id) => byId.get(id))
+                        .filter((c): c is CutoutOut => !!c)
+                        .map((c) => (
+                          <tr key={`m-${c.id}`} className="bg-zinc-900/50 text-zinc-400">
+                            <td className="py-1 pl-8 pr-1" colSpan={5}>
+                              <span className={c.status === "rejected" ? "line-through" : ""}>
+                                #{c.id} · {c.status} · {c.source}
+                              </span>
+                            </td>
+                            <td className="px-1 py-1 text-right tabular-nums">
+                              {c.confidence.toFixed(2)}
+                            </td>
+                            <td className="px-3 py-1 text-right">
+                              {!locked &&
+                                (c.status === "rejected" ? (
+                                  <button
+                                    disabled={busy}
+                                    onClick={() => onRestore(c.id)}
+                                    className="rounded bg-zinc-800 px-1.5 py-0.5 hover:bg-zinc-700 disabled:opacity-50"
+                                  >
+                                    restore
+                                  </button>
+                                ) : (
+                                  <button
+                                    disabled={busy}
+                                    onClick={() => onReject(c.id)}
+                                    className="rounded bg-zinc-800 px-1.5 py-0.5 text-red-300 hover:bg-zinc-700 disabled:opacity-50"
+                                  >
+                                    remove
+                                  </button>
+                                ))}
+                            </td>
+                          </tr>
+                        ))}
                   </Fragment>
                 ))}
               </tbody>
+              <tfoot className="sticky bottom-0 bg-zinc-950">
+                <tr className="border-t-2 border-zinc-700 font-semibold text-zinc-100">
+                  <td />
+                  <td className="px-1 py-2" colSpan={2}>
+                    Total
+                  </td>
+                  <td className="px-1 py-2 text-right tabular-nums">{shownTotals.qty}x</td>
+                  <td />
+                  <td className="px-1 py-2 text-right tabular-nums text-emerald-300">
+                    {formatLength(shownTotals.cut_length_mm)}
+                  </td>
+                  <td className="px-3 py-2 text-right text-xs font-normal text-zinc-500">
+                    cut length
+                  </td>
+                </tr>
+              </tfoot>
             </table>
             {hiddenCount > 0 && (
               <div className="border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-500">
@@ -242,9 +287,9 @@ export default function BomPanel({
                   show all
                 </button>
                 <span className="ml-2 text-zinc-700">
-                  ({activeGroups
-                    .filter((g) => hiddenKeys.has(g.key))
-                    .map((g) => `${g.shape} ${g.dims}`)
+                  ({rows
+                    .filter((r) => hiddenKeys.has(r.key))
+                    .map((r) => `${r.shape_label} ${r.dims}`)
                     .join(", ")})
                 </span>
               </div>

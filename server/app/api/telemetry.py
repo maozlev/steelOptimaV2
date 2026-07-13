@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends
+from collections import Counter
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.models import Cutout, VlmCall
+from app.db.models import Cutout, Document, Page, VlmCall
 from app.db.session import get_db
 from app.schemas.telemetry import TelemetryBatchIn
 from app.telemetry import tracker
@@ -38,42 +40,55 @@ def _status_stats(rows: list[tuple[str, int]]) -> dict:
     return {
         **counts,
         "reviewed": reviewed,
+        # total includes pending; approve_rate deliberately does not, so a
+        # summary with untouched cutouts can read "100%" — always show both
+        "total": reviewed + counts["pending"],
         "approve_rate": round(accepted / reviewed, 4) if reviewed else None,
     }
 
 
 @router.get("/summary")
-def telemetry_summary(db: Session = Depends(get_db)):
+def telemetry_summary(document_id: int | None = None, db: Session = Depends(get_db)):
+    """Cutout review stats. Scoped to one document when document_id is given,
+    otherwise across every document in the database."""
+    cutouts = db.query(Cutout.status, Cutout.source, Cutout.confidence)
+    vlm_calls = db.query(VlmCall)
+    if document_id is not None:
+        if not db.get(Document, document_id):
+            raise HTTPException(404, "Document not found")
+        page_ids = db.query(Page.id).filter(Page.document_id == document_id)
+        cutouts = cutouts.filter(Cutout.page_id.in_(page_ids))
+        vlm_calls = vlm_calls.filter(
+            VlmCall.cutout_id.in_(
+                db.query(Cutout.id).filter(Cutout.page_id.in_(page_ids))
+            )
+        )
+
+    rows = cutouts.all()
+
     by_source = {}
     for source in ("vector", "raster_cv", "vlm", "fused", "manual"):
-        rows = (
-            db.query(Cutout.status, func.count(Cutout.id))
-            .filter(Cutout.source == source)
-            .group_by(Cutout.status)
-            .all()
-        )
-        if rows:
-            by_source[source] = _status_stats(rows)
+        counts = Counter(r.status for r in rows if r.source == source)
+        if counts:
+            by_source[source] = _status_stats(list(counts.items()))
 
     by_confidence = []
     for lo, hi in CONFIDENCE_BUCKETS:
-        upper = Cutout.confidence <= hi if hi >= 1.0 else Cutout.confidence < hi
-        rows = (
-            db.query(Cutout.status, func.count(Cutout.id))
-            .filter(Cutout.confidence >= lo, upper)
-            .group_by(Cutout.status)
-            .all()
+        in_bucket = (
+            (lambda c: lo <= c <= hi) if hi >= 1.0 else (lambda c: lo <= c < hi)
         )
-        by_confidence.append({"bucket": f"{lo:.1f}-{hi:.1f}", **_status_stats(rows)})
+        counts = Counter(r.status for r in rows if in_bucket(r.confidence))
+        by_confidence.append(
+            {"bucket": f"{lo:.1f}-{hi:.1f}", **_status_stats(list(counts.items()))}
+        )
 
-    calls, ok_calls, avg_latency = (
-        db.query(
-            func.count(VlmCall.id),
-            func.sum(case((VlmCall.ok, 1), else_=0)),
-            func.avg(VlmCall.latency_ms),
-        ).one()
-    )
+    calls, ok_calls, avg_latency = vlm_calls.with_entities(
+        func.count(VlmCall.id),
+        func.sum(case((VlmCall.ok, 1), else_=0)),
+        func.avg(VlmCall.latency_ms),
+    ).one()
     return {
+        "document_id": document_id,
         "escalation_threshold": settings.escalation_threshold,
         "by_source": by_source,
         "by_confidence": by_confidence,

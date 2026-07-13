@@ -84,12 +84,50 @@ export interface SummaryBucket {
   rejected: number;
   edited: number;
   reviewed: number;
+  total: number;
   approve_rate: number | null;
 }
 
 export interface TelemetrySummary {
+  document_id: number | null;
   escalation_threshold: number;
   by_source: Record<string, SummaryBucket>;
   by_confidence: SummaryBucket[];
   vlm: { calls: number; ok_rate: number | null; avg_latency_ms: number | null };
+}
+
+// Shape is derived server-side from geometry, not read off CutoutKind: the DB
+// stores a true rectangle and an obround slot under the same "slot" kind.
+export type BomShape = "circle" | "rectangle" | "slot" | "notch" | "irregular";
+
+export interface BomRow {
+  key: string;
+  shape: BomShape;
+  shape_label: string;
+  dims: string;
+  qty: number;
+  cut_length_each_mm: number;
+  cut_length_total_mm: number;
+  pending_qty: number;
+  cutout_ids: number[];
+  rejected_ids: number[];
+  documents?: string[]; // aggregate only
+}
+
+export interface BomTotals {
+  qty: number;
+  cut_length_mm: number;
+  pending_qty: number;
+}
+
+export interface DocumentBom {
+  document: { id: number; filename: string; status: string };
+  rows: BomRow[];
+  totals: BomTotals;
+}
+
+export interface AggregateBom {
+  documents: { id: number; filename: string }[];
+  rows: BomRow[];
+  totals: BomTotals;
 }

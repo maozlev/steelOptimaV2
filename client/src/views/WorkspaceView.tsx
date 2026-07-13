@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { addToSummaryIncludes } from "../api/bom";
 import type {
+  BomRow,
   CutoutKind,
   CutoutOut,
   DocumentDetailOut,
@@ -30,7 +31,10 @@ export default function WorkspaceView({
 }) {
   const [doc, setDoc] = useState<DocumentDetailOut | null>(null);
   const [pageIdx, setPageIdx] = useState(0);
+  // Every cutout in the document, not just the page on screen — the BOM and the
+  // finalize preview cover the whole document, so they need all of them.
   const [cutouts, setCutouts] = useState<CutoutOut[]>([]);
+  const [bomRows, setBomRows] = useState<BomRow[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [filters, setFilters] = useState<Filters>({
     statuses: new Set(ALL_STATUSES),
@@ -56,9 +60,15 @@ export default function WorkspaceView({
   const page = doc?.pages[pageIdx] ?? null;
   const locked = doc?.status === "approved";
 
-  const refetchCutouts = useCallback(() => {
-    if (page) api.listCutouts(page.id).then(setCutouts).catch(() => {});
-  }, [page]);
+  /** Cutouts and BOM rows always refresh together, so the table can never drift
+   *  from the canvas. The BOM is computed server-side — see api/bom.py. */
+  const refetch = useCallback(() => {
+    api.listDocumentCutouts(docId).then(setCutouts).catch(() => {});
+    api
+      .getDocumentBom(docId)
+      .then((b) => setBomRows(b.rows))
+      .catch(() => {});
+  }, [docId]);
 
   useEffect(() => {
     api.getDocument(docId).then(setDoc).catch((e) => setError(e.message));
@@ -71,26 +81,31 @@ export default function WorkspaceView({
         }),
       )
       .catch(() => {});
-  }, [docId]);
+    refetch();
+  }, [docId, refetch]);
 
   useEffect(() => {
-    refetchCutouts();
     setSelectedId(null);
     setHighlightIds(null);
     if (page) track("page_viewed", page.id);
-  }, [refetchCutouts, page]);
+  }, [page]);
 
   const events = useJobEvents(jobId, () => {
     setJobRunning(false);
-    refetchCutouts();
+    refetch();
   });
 
+  // The canvas only ever draws the page you are looking at.
+  const pageCutouts = useMemo(
+    () => (page ? cutouts.filter((c) => c.page_id === page.id) : []),
+    [cutouts, page],
+  );
   const filtered = useMemo(
     () =>
-      cutouts.filter(
+      pageCutouts.filter(
         (c) => filters.statuses.has(c.status) && c.confidence >= filters.minConf,
       ),
-    [cutouts, filters],
+    [pageCutouts, filters],
   );
   const selected = cutouts.find((c) => c.id === selectedId) ?? null;
 
@@ -120,12 +135,15 @@ export default function WorkspaceView({
     setError(null);
     try {
       const updated = await fn();
+      // Update in place for an immediate response, then resync so the
+      // server-computed BOM rows reflect the change too.
       setCutouts((prev) => {
         const i = prev.findIndex((c) => c.id === updated.id);
         return i === -1
           ? [...prev, updated]
           : prev.map((c) => (c.id === updated.id ? updated : c));
       });
+      refetch();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -178,7 +196,7 @@ export default function WorkspaceView({
       setDoc({ ...doc, status: out.document.status });
       addToSummaryIncludes(doc.id);
       track("document_finalized", doc.id);
-      refetchCutouts();
+      refetch();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -197,6 +215,7 @@ export default function WorkspaceView({
       setCutouts((prev) =>
         prev.map((c) => results.find((r) => r.id === c.id) ?? c),
       );
+      refetch();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -376,6 +395,7 @@ export default function WorkspaceView({
           {sidebarTab === "bom" ? (
             <BomPanel
               docId={docId}
+              rows={bomRows}
               cutouts={cutouts}
               finalizeThreshold={thresholds.finalize}
               locked={locked}
@@ -397,7 +417,7 @@ export default function WorkspaceView({
           ) : (
             <>
               <CutoutSidebar
-                cutouts={cutouts}
+                cutouts={pageCutouts}
                 filtered={filtered}
                 filters={filters}
                 onFilters={setFilters}
@@ -407,6 +427,7 @@ export default function WorkspaceView({
               />
               {selected && (
                 <CutoutDetail
+                  key={selected.id}
                   cutout={selected}
                   busy={busy || locked}
                   onAction={(action) =>
@@ -446,7 +467,9 @@ export default function WorkspaceView({
           }}
         />
       )}
-      {showSummary && <SummaryPanel onClose={() => setShowSummary(false)} />}
+      {showSummary && (
+        <SummaryPanel docId={docId} onClose={() => setShowSummary(false)} />
+      )}
     </div>
   );
 }

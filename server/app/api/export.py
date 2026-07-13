@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from shapely import wkt as shapely_wkt
 from sqlalchemy.orm import Session
 
+from app.bom.service import build_rows, cutout_metrics, totals
 from app.db.models import Cutout, Document, Page
 from app.db.session import get_db
 from app.extraction.vector import PT_TO_MM
@@ -21,9 +22,12 @@ def _cutout_payload(c: Cutout) -> dict:
         [round(x * PT_TO_MM, 3), round(y * PT_TO_MM, 3)]
         for x, y in geom.exterior.coords
     ]
+    metrics = cutout_metrics(c)
     return {
         "id": c.id,
         "kind": c.kind,
+        "shape": metrics["shape"],
+        "cut_length_mm": metrics["cut_length_mm"],
         "source": c.source,
         "status": c.status,
         "confidence": c.confidence,
@@ -45,7 +49,7 @@ def export_document(doc_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Document not found")
 
     pages = []
-    total = 0
+    exported: list[Cutout] = []
     for page in doc.pages:
         cutouts = (
             db.query(Cutout)
@@ -53,7 +57,7 @@ def export_document(doc_id: int, db: Session = Depends(get_db)):
             .order_by(Cutout.id)
             .all()
         )
-        total += len(cutouts)
+        exported += cutouts
         pages.append(
             {
                 "index": page.index,
@@ -64,6 +68,8 @@ def export_document(doc_id: int, db: Session = Depends(get_db)):
             }
         )
 
+    rows = build_rows(exported)
+    total = len(exported)
     tracker.emit(db, "document_exported", entity_id=doc_id, payload={"cutouts": total})
     db.commit()
     return {
@@ -78,5 +84,6 @@ def export_document(doc_id: int, db: Session = Depends(get_db)):
         # consumers typically flip y against the page height
         "coordinate_system": "page_top_left_y_down",
         "cutout_count": total,
+        "bom": {"rows": rows, "totals": totals(rows)},
         "pages": pages,
     }
