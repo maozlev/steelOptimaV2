@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# build output
+client/dist/
+*.tsbuildinfo
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# local env / data
+.env
+*.db
+
+# claude local overrides (machine-specific)
+.claude/settings.local.json
