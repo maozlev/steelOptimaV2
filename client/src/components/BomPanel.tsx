@@ -61,14 +61,21 @@ export default function BomPanel({
   const visibleRows = rows.filter((r) => !hiddenKeys.has(r.key));
   const hiddenCount = rows.filter((r) => hiddenKeys.has(r.key)).length;
 
-  // Totals reflect what is actually shown, so hiding a row visibly changes them.
+  // The work order is what will actually be cut. Rows where nothing clears the finalize
+  // threshold are shown below a divider instead of listed among the parts — they are
+  // detector noise, and finalize will auto-reject them. They are never HIDDEN: a missed
+  // hole costs a part, a false positive costs a click.
+  const orderRows = visibleRows.filter((r) => !r.needs_review);
+  const reviewRows = visibleRows.filter((r) => r.needs_review);
+
+  // Totals cover the work order only — junk must not inflate your cut length.
   const shownTotals: BomTotals = useMemo(
     () => ({
-      qty: visibleRows.reduce((s, r) => s + r.qty, 0),
-      cut_length_mm: visibleRows.reduce((s, r) => s + r.cut_length_total_mm, 0),
-      pending_qty: visibleRows.reduce((s, r) => s + r.pending_qty, 0),
+      qty: orderRows.reduce((s, r) => s + r.qty, 0),
+      cut_length_mm: orderRows.reduce((s, r) => s + r.cut_length_total_mm, 0),
+      pending_qty: orderRows.reduce((s, r) => s + r.pending_qty, 0),
     }),
-    [visibleRows],
+    [orderRows],
   );
 
   const willApprove = cutouts.filter(
@@ -144,8 +151,19 @@ export default function BomPanel({
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((row) => (
+                {[...orderRows, ...reviewRows].map((row, idx) => (
                   <Fragment key={row.key}>
+                    {idx === orderRows.length && reviewRows.length > 0 && (
+                      <tr className="bg-zinc-900/80">
+                        <td
+                          colSpan={7}
+                          className="border-t-2 border-zinc-700 px-3 py-1.5 text-xs text-amber-300/80"
+                        >
+                          ▲ Needs review — below the {finalizeThreshold} confidence
+                          threshold. Not part of the work order; finalizing rejects these.
+                        </td>
+                      </tr>
+                    )}
                     {confirmDeleteKey === row.key ? (
                       <tr className="border-t border-zinc-800/60 bg-red-950/30">
                         <td colSpan={4} className="px-3 py-2 text-xs text-red-300">
@@ -176,7 +194,7 @@ export default function BomPanel({
                         onClick={() => toggleRow(row)}
                         className={`cursor-pointer border-t border-zinc-800/60 hover:bg-zinc-900 ${
                           expandedKey === row.key ? "bg-zinc-800/60" : ""
-                        }`}
+                        } ${row.needs_review ? "opacity-60" : ""}`}
                       >
                         <td className="px-2 py-2">
                           <div className="flex gap-1.5">

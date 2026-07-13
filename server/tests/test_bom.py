@@ -29,11 +29,14 @@ def obround(length_mm: float, width_mm: float) -> Polygon:
 class FakeCutout:
     """Stands in for a Cutout row: build_rows only touches these fields."""
 
-    def __init__(self, poly, cid=1, status="approved", kind="hole", page_id=1):
+    def __init__(
+        self, poly, cid=1, status="approved", kind="hole", page_id=1, confidence=0.98
+    ):
         self.id = cid
         self.page_id = page_id
         self.status = status
         self.kind = kind
+        self.confidence = confidence
         self.geometry_wkt = poly.wkt
         self.edited_geometry_wkt = None
 
@@ -108,6 +111,37 @@ def test_near_identical_sizes_collapse_into_one_row():
         FakeCutout(circle(4.9), cid=3),
     ]
     assert len(build_rows(cutouts)) == 1
+
+
+def test_a_rounding_boundary_cannot_split_one_hole_type():
+    """Doc_HK3573's 16 identical bolt holes came out as "15x" and "1x".
+
+    They measure 12.25-12.40mm — a 1.2% spread from CV noise — and the old grouping
+    snapped sizes to a fixed 0.5mm grid. 12.25 sits exactly on the boundary between the
+    12.0 and 12.5 buckets, and Python's round() uses BANKER'S rounding, so round(24.5)=24
+    sent that one hole to 12.0 while its fifteen siblings went to 12.5. One hole type,
+    split across two BOM rows, by a rounding rule.
+
+    Sizes are clustered against each other now. There is no grid, so there is no boundary
+    to land on.
+    """
+    holes = [
+        FakeCutout(circle(d), cid=i)
+        for i, d in enumerate([12.25, 12.25, 12.3, 12.35, 12.4, 12.4, 12.4, 12.4])
+    ]
+    rows = build_rows(holes)
+    assert len(rows) == 1, [r["dims"] for r in rows]
+    assert rows[0]["qty"] == 8
+
+
+def test_a_row_nothing_clears_the_threshold_for_is_not_work_order():
+    """Sub-threshold junk is still SHOWN — a missed hole costs a part — but it belongs
+    under "needs review", not listed among the things to cut."""
+    good = FakeCutout(circle(10.0), cid=1, status="pending", confidence=0.98)
+    junk = FakeCutout(circle(3.0), cid=2, status="pending", confidence=0.55)
+    rows = {r["dims"]: r for r in build_rows([good, junk])}
+    assert not rows["Ø 10.0 mm"]["needs_review"]
+    assert rows["Ø 3.0 mm"]["needs_review"]
 
 
 def test_distinct_sizes_stay_separate():

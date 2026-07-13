@@ -109,6 +109,10 @@ export interface BomRow {
   cut_length_each_mm: number;
   cut_length_total_mm: number;
   pending_qty: number;
+  /** Nothing in this row clears the finalize threshold — finalize will auto-reject every
+   *  member. Still shown (a missed hole costs a part) but it is not part of the work
+   *  order, and must not be listed among the things to cut. */
+  needs_review: boolean;
   cutout_ids: number[];
   rejected_ids: number[];
   documents?: string[]; // aggregate only
