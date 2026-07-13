@@ -65,9 +65,11 @@ function BomTooltip({ doc, bom }: { doc: DocumentOut; bom: DocumentBom | undefin
 export default function DocumentsView({
   onOpen,
   onSummary,
+  onProjects,
 }: {
   onOpen: (docId: number, autoRun?: boolean) => void;
   onSummary: () => void;
+  onProjects: () => void;
 }) {
   const [docs, setDocs] = useState<DocumentOut[]>([]);
   const [health, setHealth] = useState<HealthOut | null>(null);
@@ -176,6 +178,12 @@ export default function DocumentsView({
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={onProjects}
+            className="rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700"
+          >
+            🗂 Projects
+          </button>
           <button
             onClick={onSummary}
             className="rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700"

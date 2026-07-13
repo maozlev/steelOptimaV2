@@ -48,9 +48,37 @@ def finalized_doc(client):
         "pre_approved": _add_cutout_row(page_id, 0.5, status="approved"),
         "pre_rejected": _add_cutout_row(page_id, 0.95, status="rejected"),
     }
+    # The scale is the operator's to set, and finalize is blocked until they do — every
+    # dimension is a paper measurement multiplied by it.
+    assert client.patch(f"/api/pages/{page_id}/scale", json={"scale": 1.0}).status_code == 200
     r = client.post(f"/api/documents/{doc['id']}/finalize", json={})
     assert r.status_code == 200, r.text
     return doc, page_id, ids, r.json()
+
+
+def test_finalize_refuses_an_unconfirmed_scale(client):
+    """Nothing is cut from a size nobody signed off on.
+
+    Every dimension in the BOM is a paper measurement multiplied by the sheet scale. Maoz
+    made that number the operator's responsibility — so the operator has to actually
+    supply it, and the export cannot slip out with it unset.
+    """
+    # a DIFFERENT pdf — upload dedupes on content hash, not filename
+    other = sorted(PDFS_DIR.glob("*.pdf"))[1]
+    r = client.post(
+        "/api/documents",
+        files={"file": (other.name, other.read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 201, r.text
+    doc = r.json()
+    _add_cutout_row(doc["pages"][0]["id"], 0.95)
+
+    r = client.post(f"/api/documents/{doc['id']}/finalize", json={})
+    assert r.status_code == 409
+    assert "scale" in r.json()["detail"].lower()
+
+    client.patch(f"/api/pages/{doc['pages'][0]['id']}/scale", json={"scale": 5.0})
+    assert client.post(f"/api/documents/{doc['id']}/finalize", json={}).status_code == 200
 
 
 def test_config_endpoint(client):

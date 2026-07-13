@@ -96,10 +96,23 @@ def execute_job(job_id: int, emit: Emit = lambda e: None) -> None:
                     # Ø82.9 because its sheet is 1:3.5. An unconfident result is stored
                     # anyway but flagged, so the operator confirms it rather than the
                     # system silently cutting a part at the wrong size.
+                    #
+                    # NOTE: this reads the page as stored, which for a CROPPED document is
+                    # the cropped copy. The crop tool exists to cut away the title block and
+                    # margins — exactly where the printed scale and the dimension lines live
+                    # — so cropping destroys the information needed to size the parts.
+                    # Cropping Doc_HK3573 turns a confident 1:5 into an unverified 1:16.81,
+                    # and leaves A (3) with "nothing to measure a scale from". The original
+                    # sheet survives at originals_dir/{sha}.pdf; resolving from THAT is the
+                    # fix, and it is not done yet. See mds/HANDOFF.md.
                     sc = resolve_scale(pdf[page_row.index], cands)
-                    page_row.scale = sc.scale
+                    page_row.scale_detected = sc.scale
                     page_row.scale_confident = sc.confident
                     page_row.scale_note = sc.note or None
+                    # The detector PROPOSES. A re-run must never overwrite a scale a human
+                    # has already signed off on.
+                    if not page_row.scale_confirmed:
+                        page_row.scale = sc.scale
                     emit(
                         {
                             "type": "page_scale",

@@ -2,11 +2,20 @@ import { useRef, useState } from "react";
 
 export default function UploadDropzone({
   onFile,
+  multiple = false,
 }: {
   onFile: (file: File) => void;
+  multiple?: boolean;
 }) {
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+
+  const accept = (files: FileList | null) => {
+    if (!files) return;
+    for (const file of multiple ? Array.from(files) : Array.from(files).slice(0, 1)) {
+      onFile(file);
+    }
+  };
 
   return (
     <div
@@ -18,8 +27,7 @@ export default function UploadDropzone({
       onDrop={(e) => {
         e.preventDefault();
         setOver(false);
-        const file = e.dataTransfer.files[0];
-        if (file) onFile(file);
+        accept(e.dataTransfer.files);
       }}
       onClick={() => input.current?.click()}
       className={`cursor-pointer rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors ${
@@ -29,16 +37,18 @@ export default function UploadDropzone({
       }`}
     >
       <p className="text-sm text-zinc-300">
-        Drop a blueprint PDF / JPEG / PNG here, or click to browse
+        {multiple
+          ? "Drop blueprint PDFs / JPEGs / PNGs here, or click to browse"
+          : "Drop a blueprint PDF / JPEG / PNG here, or click to browse"}
       </p>
       <input
         ref={input}
         type="file"
         accept="application/pdf,image/jpeg,image/png"
+        multiple={multiple}
         className="hidden"
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onFile(file);
+          accept(e.target.files);
           e.target.value = "";
         }}
       />

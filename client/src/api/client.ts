@@ -11,6 +11,9 @@ import type {
   HealthOut,
   JobOut,
   PageScale,
+  ProjectDetailOut,
+  ProjectListOut,
+  ProjectOut,
   TelemetrySummary,
 } from "./types";
 
@@ -95,6 +98,23 @@ export const api = {
       `/api/pages/${pageId}/scale`,
       json("PATCH", { scale, session_id: sessionId }),
     ),
+
+  listProjects: () => request<ProjectListOut[]>("/api/projects"),
+  createProject: (name: string, note?: string) =>
+    request<ProjectOut>("/api/projects", json("POST", { name, note })),
+  getProject: (id: number) => request<ProjectDetailOut>(`/api/projects/${id}`),
+  patchProject: (id: number, body: { name?: string; note?: string }) =>
+    request<ProjectOut>(`/api/projects/${id}`, json("PATCH", body)),
+  deleteProject: (id: number) =>
+    request<void>(`/api/projects/${id}`, { method: "DELETE" }),
+  uploadProjectDocument(projectId: number, file: File) {
+    const form = new FormData();
+    form.append("file", file);
+    return request<DocumentDetailOut>(`/api/projects/${projectId}/documents`, {
+      method: "POST",
+      body: form,
+    });
+  },
 
   telemetrySummary: (docId?: number) =>
     request<TelemetrySummary>(

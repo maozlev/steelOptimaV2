@@ -129,13 +129,23 @@ export interface BomTotals {
 export interface PageScale {
   page_index: number;
   page_id: number;
-  scale: number | null; // real_mm / paper_mm. 1:5 sheet -> 5.0; 2:1 -> 0.5
+  /** real_mm / paper_mm. A 1:5 sheet is 5.0; a 2:1 magnified sheet is 0.5.
+   *  THE OPERATOR OWNS THIS. Finalize is blocked until it is confirmed. */
+  scale: number | null;
+  /** what the drawing's own dimensions say — kept even after an override, because it is
+   *  the only thing that can catch a typo */
+  detected: number | null;
+  confirmed: boolean;
   confident: boolean;
+  /** set when the operator's scale contradicts the drawing — a mistyped 1:50 on a 1:5
+   *  sheet cuts every part ten times too big, and does it silently */
+  disagreement: string | null;
   note: string | null;
 }
 
 export interface ScaleStatus {
   pages: PageScale[];
+  /** every page's scale has been confirmed by a human */
   trustworthy: boolean;
 }
 
@@ -144,6 +154,29 @@ export interface DocumentBom {
   scale: ScaleStatus;
   rows: BomRow[];
   totals: BomTotals;
+}
+
+export interface ProjectOut {
+  id: number;
+  name: string;
+  note: string | null;
+  created_at: string;
+}
+
+export interface ProjectListOut extends ProjectOut {
+  document_count: number;
+  table_count: number;
+  needs_review_rows: number;
+}
+
+export interface ProjectDocumentOut extends DocumentOut {
+  table_count: number;
+  needs_review_rows: number;
+  last_table_job_status: "queued" | "running" | "done" | "failed" | null;
+}
+
+export interface ProjectDetailOut extends ProjectOut {
+  documents: ProjectDocumentOut[];
 }
 
 export interface AggregateBom {

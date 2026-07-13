@@ -16,12 +16,36 @@ def _document_cutouts(db: Session, doc_id: int) -> list[Cutout]:
     return db.query(Cutout).filter(Cutout.page_id.in_(page_ids)).order_by(Cutout.id).all()
 
 
+# The operator's scale and the drawing's own dimensions may differ by this much before
+# it is treated as a disagreement worth shouting about.
+SCALE_DISAGREEMENT = 0.05
+
+
+def _disagreement(page: Page) -> str | None:
+    """Does the scale the operator set contradict what the drawing says?
+
+    This is the ONLY thing that can catch a typo. The operator owns the number — but
+    "1:50" for a 1:5 sheet cuts every part ten times too big, and does it silently, which
+    is exactly the failure mode the whole scale system exists to prevent. Two independent
+    sources still have to agree; only the roles have swapped. The detector no longer
+    decides — it checks.
+    """
+    if not page.scale or not page.scale_detected:
+        return None
+    a, b = page.scale, page.scale_detected
+    if abs(a - b) <= SCALE_DISAGREEMENT * max(a, b):
+        return None
+    return (
+        f"you set 1:{a:g}, but this drawing's own dimensions say 1:{b:g} "
+        f"— that is {max(a, b) / min(a, b):.1f}x out. One of them is wrong."
+    )
+
+
 def _scale_status(db: Session, doc_id: int) -> dict:
     """Whether this document's sizes can be believed.
 
-    Dimensions are measured in PAPER mm and multiplied by the sheet scale. If a page's
-    scale is unknown or unverified, its numbers are the size of ink on a page, not of a
-    part — and the operator has to be told so, loudly.
+    Dimensions are measured in PAPER mm and multiplied by the sheet scale. Until a human
+    has confirmed that scale, the numbers are the size of ink on a page, not of a part.
     """
     pages = db.query(Page).filter(Page.document_id == doc_id).order_by(Page.index).all()
     return {
@@ -30,12 +54,16 @@ def _scale_status(db: Session, doc_id: int) -> dict:
                 "page_index": p.index,
                 "page_id": p.id,
                 "scale": p.scale,
+                "detected": p.scale_detected,
+                "confirmed": p.scale_confirmed,
                 "confident": p.scale_confident,
+                "disagreement": _disagreement(p),
                 "note": p.scale_note,
             }
             for p in pages
         ],
-        "trustworthy": all(p.scale is not None and p.scale_confident for p in pages),
+        # the operator has signed off on every page
+        "trustworthy": all(p.scale is not None and p.scale_confirmed for p in pages),
     }
 
 
@@ -63,14 +91,13 @@ class PageScaleIn(BaseModel):
 
 
 @router.patch("/pages/{page_id}/scale")
-def set_page_scale(
-    page_id: int, body: PageScaleIn, db: Session = Depends(get_db)
-):
-    """Let the operator state the scale the system could not establish.
+def set_page_scale(page_id: int, body: PageScaleIn, db: Session = Depends(get_db)):
+    """The operator sets the sheet scale. This is THEIR call, and the document cannot be
+    finalized until they have made it.
 
-    Some sheets carry no printed scale and no dimension the geometry can be checked
-    against — A (3) is one. Guessing there would silently produce wrong parts; asking
-    is a five-second job. A scale set by a human is trusted.
+    The detector's estimate is kept (scale_detected) and cross-checked against what they
+    typed. It no longer decides — it checks. That check is the only thing standing between
+    a mistyped "1:50" on a 1:5 sheet and every part being cut ten times too big.
     """
     page = db.get(Page, page_id)
     if not page:
@@ -79,17 +106,30 @@ def set_page_scale(
     ensure_unlocked(doc)
 
     page.scale = body.scale
-    page.scale_confident = True
-    page.scale_note = "set by operator"
+    page.scale_confirmed = True
+    page.scale_note = "confirmed by operator"
+    warning = _disagreement(page)
+
     tracker.emit(
-        db, "page_scale_set", entity_id=page_id,
-        payload={"scale": body.scale}, session_id=body.session_id,
+        db,
+        "page_scale_set",
+        entity_id=page_id,
+        payload={
+            "scale": body.scale,
+            "detected": page.scale_detected,
+            "disagrees": bool(warning),
+        },
+        session_id=body.session_id,
     )
     db.commit()
     return {
         "page_id": page.id,
         "scale": page.scale,
+        "detected": page.scale_detected,
+        "confirmed": page.scale_confirmed,
         "confident": page.scale_confident,
+        # accepted, but the operator is told plainly that the drawing disagrees
+        "disagreement": warning,
         "note": page.scale_note,
     }
 

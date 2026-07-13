@@ -112,6 +112,23 @@ def finalize_document(
     if doc.status == "approved":
         raise HTTPException(409, "Document already finalized")
 
+    # The scale is the operator's call, and nothing gets cut from a size nobody signed off
+    # on. Every dimension in the BOM is a paper measurement multiplied by this number; with
+    # it unset or unconfirmed, the export is the size of ink on a page, not of a part.
+    unconfirmed = [
+        p.index
+        for p in db.query(Page).filter(Page.document_id == doc_id).order_by(Page.index)
+        if p.scale is None or not p.scale_confirmed
+    ]
+    if unconfirmed:
+        pages = ", ".join(f"page {i + 1}" for i in unconfirmed)
+        raise HTTPException(
+            409,
+            f"Scale not confirmed for {pages}. Every dimension here is a paper "
+            f"measurement multiplied by the sheet scale — set and confirm it before "
+            f"finalizing, or the parts will be cut at the wrong size.",
+        )
+
     cutouts = (
         db.query(Cutout)
         .join(Page, Cutout.page_id == Page.id)
