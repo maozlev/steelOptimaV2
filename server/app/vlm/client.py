@@ -95,7 +95,11 @@ class OllamaVlmClient:
             ],
             "format": schema,
             "stream": False,
-            "options": {"temperature": 0},
+            # num_ctx matters more than it looks: the model ships with a 262k
+            # context window, whose KV cache pushes most of the weights out of
+            # VRAM onto the CPU (observed: 16.3GB model, 5.9GB in VRAM, minutes
+            # per call). One image + a JSON reply needs nowhere near that.
+            "options": {"temperature": 0, "num_ctx": 8192},
         }
 
         t0 = time.time()
