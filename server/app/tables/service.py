@@ -472,7 +472,11 @@ def execute_table_job(job_id: int, emit: Emit = lambda e: None) -> None:
                         ):
                             continue  # human-reviewed table at this spot survives
                         _process_table(db, job, page_row, page, grid, client, emit)
-                    db.commit()
+                        # commit per TABLE, not per page: a page's VLM calls can
+                        # take minutes, and an open write transaction that long
+                        # locks every other writer out of SQLite (live telemetry
+                        # inserts were failing while a job ran)
+                        db.commit()
             job.status = "done"
         except Exception as e:
             job.status = "failed"
