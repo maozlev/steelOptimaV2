@@ -52,10 +52,18 @@ cd server && uv run python tools/eval_detection.py
 ```
 
 It scores the pipeline against `tests/fixtures/ground_truth.json` — the right answers,
-confirmed by Maoz against the actual drawings. **Currently 94% recall / 98% precision per
+confirmed by Maoz against the actual drawings. **Currently 94% recall / 100% precision per
 drawing.** Every significant fix in this project was found or validated by that harness, and
-two were *reverted* by it. Run it before and after any change. Trust the **macro**
+*three were reverted by it*. Run it before and after any change. Trust the **macro**
 (per-drawing) number: micro flatters, because A (4) contributes 293 identical holes.
+
+Also `uv run python tools/inspect_ink.py` — run this FIRST on any drawing that misbehaves. It
+says how the page was read (colour convention / stroke width / fail-safe) and why. A wrong
+convention decision looks like a detection bug everywhere downstream.
+
+**Ground truth has been wrong twice, and Maoz caught both.** When he says a number looks
+wrong, go and look — he has been right every time. The limiting factor on this project is
+labelled drawings, not algorithms.
 
 Rules Maoz confirmed: cutouts are enclosed holes and notches cut *into* the part — not the
 outer profile, chamfers or gear teeth. And **never miss a real hole**: a false positive costs
@@ -93,15 +101,26 @@ symbols does not get a delete key.
 (drops to 0.50, visible, one click to restore) — it never deletes. A confirmation moves
 nothing. See `vlm/verify.py`.
 
+## Live trap: cropping destroys the scale
+
+The crop tool removes the title block and margins — **exactly where the printed scale and the
+dimension lines live**. Cropping Doc_HK3573 turns a confident 1:5 into an unverified 1:16.81.
+Maoz's call is that he simply won't crop; the next operator will. The original sheet survives
+at `originals_dir/{sha}.pdf`, so resolving the scale from *that* is the real fix (~15 lines).
+Unfixed, noted in `extraction/service.py`.
+
 ## Do NOT rebuild these (tried, measured, rejected)
 
 - **Forking the pipeline "simple vs complex".** The real split is which drafting *convention*
   a sheet uses, and A (3)/A (4) share theirs with the washer and the gasket. A fork would
-  silently mis-route them. One pipeline that detects the convention per page gets 94/98.
-- **Part-outline gating.** Title-block symbols are closed loops, so they qualify as parts and
-  admit themselves; and it cost recall (93% → 86%).
+  silently mis-route them. One pipeline that detects the convention per page gets 94/100.
+- **Part-outline gating without BOTH conditions.** A part outline must be *big* AND *contain
+  something*. Missing the size test does nothing at all (the symbols are top-level loops and
+  admit themselves); missing "contains something" costs 7% recall (12562's octagon is only a
+  planar face, so its own slots got declared "parts").
 - **Comparing areas instead of shapes** for slot classification → the gasket reported 47 slots
   instead of 5.
+- **Trusting the printed title-block scale.** It lies on three of eight drawings.
 
 If a threshold sweep gives *identical* results at every setting, the knob isn't connected. I
 lost a cycle to that.
@@ -109,13 +128,18 @@ lost a cycle to that.
 ## Open backlog, in order of value
 
 1. **The flange's notch.** Cuts open to the part's edge are invisible today — needs concavity
-   analysis of the outline, not enclosed-loop detection. The only real recall gap left.
-2. **A (3)'s dimension-line measurement runs a few % long** (its labels imply 7.23/7.53/7.66;
+   analysis of the outline, not enclosed-loop detection. **The only real recall gap left**, and
+   a whole feature class.
+2. **Grow the fixture set to ~20 real drawings** with confirmed answers. 94/100 on eight
+   samples is one new customer away from being wrong. Cheapest and most informative item here.
+3. **The crop trap** (above). ~15 lines.
+4. **A (3)'s dimension-line measurement runs a few % long** (its labels imply 7.23/7.53/7.66;
    the truth is 7.75). The resolver correctly refuses to be confident and asks the operator.
    Root cause unknown — don't tune against A (3) until it is.
-3. Doc_HK3573's three title-block artifacts. Three clicks. Lowest value.
-4. **No DXF export.** `export.py` even comments about "DXF consumers" but emits JSON only —
+5. **No DXF export.** `export.py` even comments about "DXF consumers" but emits JSON only —
    the actual handoff to nesting/CNC, and the product's missing last mile.
-5. **Finalize is a permanent lock.** No unlock endpoint; the only escape is deleting the doc.
-6. **No WS reconnect or polling fallback.** If the socket drops, `jobRunning` sticks true and
+6. **Nothing marks a document stale** after a pipeline change. Maoz was once looking at 112
+   candidates from a job run before the fixes; a re-run gave 17.
+7. **No WS reconnect or polling fallback.** If the socket drops, `jobRunning` sticks true and
    "Run extraction" stays disabled forever. `GET /api/jobs/{id}` exists and is never called.
+8. **Finalize is a permanent lock.** No unlock endpoint; the only escape is deleting the doc.
