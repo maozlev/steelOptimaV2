@@ -49,11 +49,19 @@ def _mrr_sides_mm(poly: Polygon) -> tuple[float, float] | None:
     return max(a, b) * PT_TO_MM, min(a, b) * PT_TO_MM
 
 
-def shape_metrics(poly: Polygon, kind: str | None = None) -> dict:
+def shape_metrics(
+    poly: Polygon, kind: str | None = None, cut_hint_mm: float | None = None
+) -> dict:
     """Derive shape, dimensions (mm) and cut length (mm) for one cutout.
 
-    `kind` is only consulted for "notch", which CV never emits — it can only come
-    from a human or the VLM, so it is an explicit label worth preserving.
+    `kind` is only consulted for "notch": geometry alone cannot tell a notch from an
+    enclosed cutout, because the stored polygon is closed either way. The label comes
+    from the detector's concavity analysis, a human, or the VLM.
+
+    `cut_hint_mm` is the detector's burn length for a notch. A notch's mouth — the side
+    open to the part's edge — is never cut, and only the detector, holding the part's
+    convex hull, knows which side that is. Without the hint the closed-polygon
+    perimeter is the only honest fallback.
     """
     area_pt = poly.area
     perimeter_pt = poly.exterior.length
@@ -63,7 +71,14 @@ def shape_metrics(poly: Polygon, kind: str | None = None) -> dict:
         "cut_length_mm": round(perimeter_pt * PT_TO_MM, 2),
     }
     if kind == NOTCH:
-        return {**fallback, "shape": NOTCH}
+        sides = _mrr_sides_mm(poly)
+        dims = (
+            {"length_mm": round(sides[0], 2), "width_mm": round(sides[1], 2)}
+            if sides
+            else _bbox_dims(poly)
+        )
+        cut = round(cut_hint_mm, 2) if cut_hint_mm else fallback["cut_length_mm"]
+        return {"shape": NOTCH, "dims": dims, "cut_length_mm": cut}
     if not perimeter_pt or not area_pt:
         return fallback
 

@@ -5,9 +5,16 @@ import fitz
 import pytest
 from shapely.geometry import Point, Polygon, box
 
+from app.config import settings
 from app.extraction.ocr import OcrWord, annotate_candidates
 from app.extraction.scoring import score_candidate
-from app.extraction.vector import Candidate, _classify, extract_candidates
+from app.extraction.vector import (
+    PT_TO_MM,
+    Candidate,
+    _classify,
+    build_candidates,
+    extract_candidates,
+)
 
 PDFS_DIR = Path(__file__).parent.parent.parent / "pdfs"
 
@@ -97,10 +104,69 @@ def test_score_bounds():
     assert 0.0 < score_candidate(c) <= 0.98
 
 
+# --- notches: cutouts open to the part's edge -------------------------------
+
+PAGE_AREA = 595.0 * 842.0  # A4 in points
+
+
+def _plate_with_notch(with_hole: bool = True):
+    """A 200x100 plate with a 40-wide, 20-deep notch cut into its top edge."""
+    plate = Polygon(
+        [(0, 0), (200, 0), (200, 100), (120, 100), (120, 80), (80, 80), (80, 100), (0, 100)]
+    )
+    shells = [(plate, False)]
+    if with_hole:
+        shells.append((Point(40, 40).buffer(10, quad_segs=32), True))
+    return shells
+
+
+def test_notch_read_off_the_part_outline():
+    cands = build_candidates(_plate_with_notch(), PAGE_AREA, [])
+    notches = [c for c in cands if c.kind == "notch"]
+    assert len(notches) == 1
+    n = notches[0]
+    assert n.measured_dims["length_mm"] == pytest.approx(40 * PT_TO_MM, abs=0.1)
+    assert n.measured_dims["width_mm"] == pytest.approx(20 * PT_TO_MM, abs=0.1)
+    # the burn is the two walls and the floor; the mouth is open air, never cut
+    assert n.measured_dims["cut_length_mm"] == pytest.approx(80 * PT_TO_MM, abs=0.1)
+    assert score_candidate(n) >= settings.finalize_threshold
+
+
+def test_notch_needs_a_part_that_contains_something():
+    """A bare outline with nothing inside it is not proven to be a part, so no
+    notch may be invented from its concavities."""
+    cands = build_candidates(_plate_with_notch(with_hole=False), PAGE_AREA, [])
+    assert not [c for c in cands if c.kind == "notch"]
+
+
+def test_gear_teeth_are_not_notches():
+    """Tooth gaps are concavities of the outline too — but tiny ones, and they are
+    the part's own shape (ASH-071222: 53 gaps, each ~0.2% of the gear)."""
+    top = [(0, 0), (200, 0), (200, 200)]
+    for x0 in reversed([10 + 15 * i for i in range(10)]):  # right to left
+        top += [(x0 + 4, 200), (x0 + 4, 198), (x0, 198), (x0, 200)]
+    gear = Polygon(top + [(0, 200)])
+    shells = [(gear, False), (Point(100, 100).buffer(30, quad_segs=32), True)]
+    cands = build_candidates(shells, PAGE_AREA, [])
+    assert not [c for c in cands if c.kind == "notch"]
+
+
+def test_tapered_end_is_not_a_notch():
+    """A diagonal profile end (A (3)'s beam) is a big concavity of the hull, but a
+    triangular one — not the shape of a manufactured cut."""
+    beam = Polygon([(60, 0), (200, 0), (200, 100), (0, 100), (0, 40)])
+    shells = [(beam, False), (Point(120, 50).buffer(10, quad_segs=32), True)]
+    cands = build_candidates(shells, PAGE_AREA, [])
+    assert not [c for c in cands if c.kind == "notch"]
+
+
 # What the pipeline currently emits above the finalize threshold. This is a change
 # detector, NOT a statement of correctness — for that see tests/fixtures/ground_truth.json
 # and tools/eval_detection.py.
 PIPELINE_CASES = {
+    # the flange: its Ø235 bore, and the 340x100 notch cut open to its bottom edge —
+    # the notch is read off the part outline's concavity, not an enclosed loop
+    "117-626-141_1_BLANK_Rev.01.pdf": {"hole": 1, "notch": 1},
     "A (3).pdf": {"hole": 128, "slot": 20},
     "A (4).pdf": {"hole": 293},
     # Doc_HK3573 is a gasket: 16 bolt holes + 1 central Ø605 bore = 17, confirmed by Maoz

@@ -29,11 +29,11 @@ human review → finalize → export.
 
 ## Where accuracy stands
 
-### 94% recall · **100% precision**, per drawing. 164 tests pass.
+### **100% recall · 100% precision**, per drawing.
 
 | Drawing | Part | Scale | True | Found | Recall |
 |---|---|---|---|---|---|
-| 117-626-141_1 | Flange | 1:5 | 2 | 1 | **50%** — misses the notch |
+| 117-626-141_1 | Flange | 1:5 | 2 | 2 | 100% — incl. the notch |
 | 117-626-141_4 | Plate | 1:2 | 2 | 2 | 100% |
 | 12562-3000F501023 | Plate | **2:1** | 2 | 2 | 100% |
 | 333-532-294 | Washer | 1:3 | 1 | 1 | 100% |
@@ -42,9 +42,10 @@ human review → finalize → export.
 | A (4) | Beam | 1:1 | 293 | 293 | 100% |
 | Doc_HK3573 | Gasket | 1:5 | 17 | 17 | 100% |
 
-**Every drawing finds every cutout and invents none — except the flange's notch**, which is
-a feature that does not exist yet rather than a detection failure. It is the only gap in the
-whole set.
+**Every drawing finds every cutout and invents none.** The last gap — the flange's notch, a
+whole feature class of cuts open to the part's edge — closed on 2026-07-14 (see §7 below).
+Treat the number with respect, not comfort: eight drawings, and the notch detector has
+exactly one real positive example.
 
 ### The most important file in the repo
 
@@ -87,7 +88,7 @@ answers will tell you more about true accuracy than any amount of tuning.
 
 ---
 
-## The six load-bearing ideas
+## The seven load-bearing ideas
 
 ### 1. Decide how to READ the drawing, before polygonizing anything
 
@@ -220,6 +221,36 @@ Cut length is computed from `π·d`, `2(L+W)`, `2(L−W)+πW` — not the polygo
 circle is a many-segment polyline and a snapped raster circle is a 16-gon; both under-measure
 a true circumference.
 
+### 7. A notch is a bite out of the outline — and its mouth is never cut
+
+A notch is open to the part's edge, so it is invisible to everything above: it is never an
+enclosed loop or a planar face. `vector._notch_candidates` reads it off the part outline's
+**concavities** instead — convex hull minus outline — and keeps a piece only if it looks like
+a manufactured cut. Two gates, and on the sample set they separate cleanly by two orders of
+magnitude:
+
+- **Shape**: the piece must fit an ideal rectangle/obround (same `SLOT_FIT_THRESHOLD`, 0.90).
+  The flange's real 340×100 notch fits at **0.97**; gear tooth gaps fit at ~0.6 and A (3)'s
+  tapered beam ends — big concavities, but the part's own shape — are triangles at **0.50**.
+- **Size**: ≥1% of its part (`NOTCH_MIN_HOST_FRAC`). The notch is 14% of the flange; a tooth
+  gap is 0.2% of the gear. Kept even though shape alone suffices on these eight, because a
+  hull sliver along a near-straight arc can accidentally fit a rectangle.
+
+Hosts are found like part outlines but **planar faces are eligible** (`_notch_hosts`): the
+flange's profile never closes into one CAD loop, so it exists only as a face — top-level,
+big, and containing something still required, so title-block cells stay out.
+
+**The burn length excludes the mouth.** The open side lies on the hull, not on the part; only
+the detector, holding the hull, knows which side that is, so it stores the true burn in
+`measured_dims` and the BOM prefers it while the geometry is unedited (`cut_hint_mm` in
+`bom/shapes.py`). The flange's notch burns 540 mm, not the 880 mm perimeter of its polygon.
+
+One honest caveat: the detector has **exactly one real positive example**. The gates are
+placed by evidence from all eight drawings, but nothing has yet tested a small real notch, a
+semicircular one, or a sheet whose frame face sneaks under `FRAME_AREA_RATIO` with a
+title-block-shaped concavity. More labelled drawings beat more tuning, here more than
+anywhere.
+
 ---
 
 ## The BOM
@@ -297,7 +328,7 @@ extracting geometry from the cropped region is the real fix (~15 lines). Noted i
 - **Forking the pipeline "simple vs complex"** (Maoz's suggestion). The real split is which
   drafting **convention** a sheet uses, and A (3)/A (4) share theirs with the **washer and the
   gasket** — two of the "complex" drawings. A fork would silently mis-route them. One pipeline
-  that detects the convention per page already gets 94/100.
+  that detects the convention per page already gets 100/100.
 - **Part-outline gating without both conditions** — see §2. Cost 7% recall.
 - **Comparing areas instead of shapes** for slot classification → 47 slots instead of 5.
 - **Trusting the printed title-block scale.** It lies on at least three of eight drawings.
@@ -317,26 +348,23 @@ and wrote a comment telling the next person not to try it. **It was never switch
 
 ## Open, in order of value
 
-1. **The flange's notch.** Cuts open to the part's edge are invisible today — needs concavity
-   analysis of the outline, not enclosed-loop detection. **The only real recall gap left**, and
-   a whole feature class.
-2. **Grow the fixture set to ~20 real drawings** with confirmed answers. 94/100 on eight
+1. **Grow the fixture set to ~20 real drawings** with confirmed answers. 100/100 on eight
    samples is one new customer away from being wrong. **The cheapest and most informative thing
-   on this list.**
-3. **The crop trap** (above). ~15 lines.
-4. **A (3)'s dimension-line measurement runs a few % long** — its labels imply 7.23/7.53/7.66
+   on this list** — and the notch detector (§7) has exactly one real positive example.
+2. **The crop trap** (above). ~15 lines.
+3. **A (3)'s dimension-line measurement runs a few % long** — its labels imply 7.23/7.53/7.66
    where the truth is 7.75. The resolver correctly refuses to be confident and asks the
    operator. Root cause unknown (probably arrowhead overshoot). **Do not tune against A (3)
    until it is understood.**
-5. **DXF export.** `export.py` even comments about "DXF consumers" but emits JSON only — the
+4. **DXF export.** `export.py` even comments about "DXF consumers" but emits JSON only — the
    actual handoff to nesting/CNC, and the product's missing last mile. *(If DXF ever becomes
    available as an* input *for some customers, that path is exact — a DXF carries geometry and
    layers outright, no inference. PDF is a lossy picture of one.)*
-6. **A document is not marked stale after a pipeline change.** Maoz was looking at 112
+5. **A document is not marked stale after a pipeline change.** Maoz was looking at 112
    candidates from a job run before the fixes; a re-run gives 17. Nothing tells you to re-run.
-7. **No WS reconnect / polling fallback.** A dropped socket disables "Run extraction" forever.
+6. **No WS reconnect / polling fallback.** A dropped socket disables "Run extraction" forever.
    `GET /api/jobs/{id}` exists and is never called.
-8. **Finalize is a permanent lock.** No unlock endpoint; the only escape is deleting the doc.
+7. **Finalize is a permanent lock.** No unlock endpoint; the only escape is deleting the doc.
 
 ---
 

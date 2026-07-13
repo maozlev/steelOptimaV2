@@ -1,5 +1,7 @@
 """Group cutouts into BOM rows: one row per (shape, size), with quantity and cut length."""
 
+import json
+
 from shapely import wkt as shapely_wkt
 
 from app.bom.shapes import SHAPE_LABEL, dims_label, shape_metrics
@@ -24,7 +26,13 @@ def cutout_metrics(c: Cutout, scale: float | None = None) -> dict:
     Ø290 bore measures Ø82.9 of paper. Callers that have a page MUST pass its scale.
     """
     geom = shapely_wkt.loads(c.edited_geometry_wkt or c.geometry_wkt)
-    m = shape_metrics(geom, c.kind)
+    # A notch's mouth is open to the part's edge and never burned; the detector
+    # measured the true cut side at extraction time. Editing the geometry
+    # invalidates that measurement, so fall back to the perimeter then.
+    hint = None
+    if c.kind == "notch" and not c.edited_geometry_wkt and c.measured_dims_json:
+        hint = json.loads(c.measured_dims_json).get("cut_length_mm")
+    m = shape_metrics(geom, c.kind, cut_hint_mm=hint)
     if scale is None or scale == 1.0:
         return m
     return {

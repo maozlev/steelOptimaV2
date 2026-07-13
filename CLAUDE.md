@@ -19,7 +19,7 @@ outward-facing actions (history rewrites, force-push, deleting data, anything pu
 is enabled for this repo (`.claude/settings.json`) and enforces the decision ladder: does it need
 to exist → already in the codebase → stdlib → native platform → existing dependency → one-liner →
 only then write something new. Follow it. This codebase in particular already has
-`listDocumentCutouts`, a server-side overlay renderer, and a `notch` enum that nothing calls —
+`listDocumentCutouts` and a server-side overlay renderer that are easy to miss —
 check before you build. Laziness is about *output*, not *rigor*: still read the code, still run
 the tests.
 
@@ -52,7 +52,7 @@ cd server && uv run python tools/eval_detection.py
 ```
 
 It scores the pipeline against `tests/fixtures/ground_truth.json` — the right answers,
-confirmed by Maoz against the actual drawings. **Currently 94% recall / 100% precision per
+confirmed by Maoz against the actual drawings. **Currently 100% recall / 100% precision per
 drawing.** Every significant fix in this project was found or validated by that harness, and
 *three were reverted by it*. Run it before and after any change. Trust the **macro**
 (per-drawing) number: micro flatters, because A (4) contributes 293 identical holes.
@@ -113,7 +113,7 @@ Unfixed, noted in `extraction/service.py`.
 
 - **Forking the pipeline "simple vs complex".** The real split is which drafting *convention*
   a sheet uses, and A (3)/A (4) share theirs with the washer and the gasket. A fork would
-  silently mis-route them. One pipeline that detects the convention per page gets 94/100.
+  silently mis-route them. One pipeline that detects the convention per page gets 100/100.
 - **Part-outline gating without BOTH conditions.** A part outline must be *big* AND *contain
   something*. Missing the size test does nothing at all (the symbols are top-level loops and
   admit themselves); missing "contains something" costs 7% recall (12562's octagon is only a
@@ -127,19 +127,17 @@ lost a cycle to that.
 
 ## Open backlog, in order of value
 
-1. **The flange's notch.** Cuts open to the part's edge are invisible today — needs concavity
-   analysis of the outline, not enclosed-loop detection. **The only real recall gap left**, and
-   a whole feature class.
-2. **Grow the fixture set to ~20 real drawings** with confirmed answers. 94/100 on eight
+1. **Grow the fixture set to ~20 real drawings** with confirmed answers. 100/100 on eight
    samples is one new customer away from being wrong. Cheapest and most informative item here.
-3. **The crop trap** (above). ~15 lines.
-4. **A (3)'s dimension-line measurement runs a few % long** (its labels imply 7.23/7.53/7.66;
+   The notch detector in particular has exactly ONE real positive example (the flange).
+2. **The crop trap** (above). ~15 lines.
+3. **A (3)'s dimension-line measurement runs a few % long** (its labels imply 7.23/7.53/7.66;
    the truth is 7.75). The resolver correctly refuses to be confident and asks the operator.
    Root cause unknown — don't tune against A (3) until it is.
-5. **No DXF export.** `export.py` even comments about "DXF consumers" but emits JSON only —
+4. **No DXF export.** `export.py` even comments about "DXF consumers" but emits JSON only —
    the actual handoff to nesting/CNC, and the product's missing last mile.
-6. **Nothing marks a document stale** after a pipeline change. Maoz was once looking at 112
+5. **Nothing marks a document stale** after a pipeline change. Maoz was once looking at 112
    candidates from a job run before the fixes; a re-run gave 17.
-7. **No WS reconnect or polling fallback.** If the socket drops, `jobRunning` sticks true and
+6. **No WS reconnect or polling fallback.** If the socket drops, `jobRunning` sticks true and
    "Run extraction" stays disabled forever. `GET /api/jobs/{id}` exists and is never called.
-8. **Finalize is a permanent lock.** No unlock endpoint; the only escape is deleting the doc.
+7. **Finalize is a permanent lock.** No unlock endpoint; the only escape is deleting the doc.

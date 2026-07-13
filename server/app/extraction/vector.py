@@ -35,6 +35,13 @@ DUPLICATE_IOU = 0.40
 # ...unless one is genuinely NESTED inside the other and materially smaller, in which
 # case it is a real cutout: a gasket's bore fills 78% of its ring and must survive.
 NESTED_MAX_RATIO = 0.95
+# A notch (a bite out of the outline, open to the part's edge) must be a meaningful
+# fraction of its part. What this separates it from is the part's OWN shape, which is
+# never a cutout: a gear tooth gap is ~0.2% of the gear, the flange's real notch is 14%
+# of its part. Shape fit alone also separates them (teeth ~0.6, the notch 0.97), but a
+# hull sliver along a near-straight arc can accidentally fit a rectangle, so both gates
+# are kept.
+NOTCH_MIN_HOST_FRAC = 0.01
 
 PT_TO_MM = 25.4 / 72
 
@@ -42,7 +49,7 @@ PT_TO_MM = 25.4 / 72
 @dataclass
 class Candidate:
     polygon: Polygon
-    kind: str  # hole | slot | freeform
+    kind: str  # hole | slot | notch | freeform
     shape_fit: float  # 0-1 quality of the circle/rect fit
     parent_area: float
     measured_dims: dict
@@ -258,6 +265,91 @@ def _part_outlines(inner: list[tuple[Polygon, bool]]) -> list[Polygon]:
     ]
 
 
+def _notch_hosts(inner: list[tuple[Polygon, bool]]) -> list[Polygon]:
+    """Shells whose outline is worth checking for notches.
+
+    Unlike _part_outlines, planar faces ARE eligible: a part whose profile never closes
+    into a single CAD loop (the flange, 12562's octagon) exists only as a face, and the
+    flange's notch is exactly the case this has to catch. The other conditions still
+    hold — top-level, big, and containing something — so title-block cells and the gaps
+    between dimension lines stay out.
+    """
+    if not inner:
+        return []
+    biggest = max(s.area for s, _ in inner)
+    hosts = []
+    for s, _ in inner:
+        if s.area < MIN_PART_AREA_FRAC * biggest:
+            continue
+        if any(
+            o is not s and o.area > s.area and o.contains(s.representative_point())
+            for o, _ in inner
+        ):
+            continue
+        # a part CONTAINS cutouts; a shape with nothing inside it is not a part
+        if not any(
+            o is not s and o.area < s.area and s.contains(o.representative_point())
+            for o, _ in inner
+        ):
+            continue
+        hosts.append(s)
+    return hosts
+
+
+def _notch_candidates(inner: list[tuple[Polygon, bool]], source: str) -> list[Candidate]:
+    """Notches: cutouts OPEN to the part's edge, invisible to enclosed-loop detection.
+
+    A notch is a bite out of the part's outline — a concavity (convex hull minus the
+    outline) that is itself shaped like a manufactured cut, a rectangle or an obround.
+    That second clause is what separates it from the part's own shape, which is never a
+    cutout: gear teeth are concavities too, but tiny and poorly rectangular (~0.6), and
+    A (3)'s tapered beam ends are big but triangular (rect fit 0.50). The flange's real
+    340x100 notch is 14% of its part at rect fit 0.97.
+    """
+    out: list[Candidate] = []
+    for host in _notch_hosts(inner):
+        hull = host.convex_hull
+        diff = hull.difference(host)
+        pieces = list(diff.geoms) if diff.geom_type == "MultiPolygon" else [diff]
+        for piece in pieces:
+            if piece.is_empty or piece.geom_type != "Polygon":
+                continue
+            if piece.area < max(MIN_CUTOUT_AREA_PT2, NOTCH_MIN_HOST_FRAC * host.area):
+                continue
+            fits = _box_fits(piece)
+            if fits is None:
+                continue
+            rect_fit, obround_fit, length, width = fits
+            fit = max(rect_fit, obround_fit)
+            if fit < SLOT_FIT_THRESHOLD:
+                continue
+            # duplicate hosts (a closed loop and its own planar face) bite twice
+            if any(_iou(piece, c.polygon) > DUPLICATE_IOU for c in out):
+                continue
+            # The burn is the part-edge side only. The mouth — where the piece lies on
+            # the hull — is open air, nothing is cut there. Only here, where the hull
+            # is known, can the two be told apart; the length rides along in
+            # measured_dims because BOM code recomputing from the polygon cannot.
+            mouth = piece.exterior.intersection(hull.exterior).length
+            out.append(
+                Candidate(
+                    polygon=piece,
+                    kind="notch",
+                    shape_fit=min(fit, 1.0),
+                    parent_area=host.area,
+                    measured_dims={
+                        "length_mm": round(length * PT_TO_MM, 2),
+                        "width_mm": round(width * PT_TO_MM, 2),
+                        "cut_length_mm": round(
+                            (piece.exterior.length - mouth) * PT_TO_MM, 2
+                        ),
+                    },
+                    source=source,
+                )
+            )
+    return out
+
+
 def ideal_obround(mrr: Polygon, length: float, width: float) -> Polygon | None:
     """The stadium that would exactly fill this oriented bounding box.
 
@@ -295,6 +387,22 @@ def _shape_fit(poly: Polygon, ideal: Polygon | None) -> float:
         return 0.0
 
 
+def _box_fits(poly: Polygon) -> tuple[float, float, float, float] | None:
+    """(rect_fit, obround_fit, length_pt, width_pt) against the minimum rotated
+    rectangle. Fits are IoU against the ideal shapes themselves, not merely their
+    areas: an arbitrary blob can share an obround's area ratio without being one."""
+    mrr = poly.minimum_rotated_rectangle
+    if not isinstance(mrr, Polygon) or not mrr.area:
+        return None
+    coords = list(mrr.exterior.coords)
+    side_a = LineString(coords[0:2]).length
+    side_b = LineString(coords[1:3]).length
+    length, width = max(side_a, side_b), min(side_a, side_b)
+    rect_fit = poly.area / mrr.area
+    obround_fit = _shape_fit(poly, ideal_obround(mrr, length, width))
+    return rect_fit, obround_fit, length, width
+
+
 def _classify(poly: Polygon) -> tuple[str, float, dict]:
     area = poly.area
     perimeter = poly.exterior.length
@@ -305,20 +413,13 @@ def _classify(poly: Polygon) -> tuple[str, float, dict]:
         dims = {"diameter_mm": round(diameter_pt * PT_TO_MM, 2)}
         return "hole", circularity, dims
 
-    mrr = poly.minimum_rotated_rectangle
-    if isinstance(mrr, Polygon) and mrr.area:
-        coords = list(mrr.exterior.coords)
-        side_a = LineString(coords[0:2]).length
-        side_b = LineString(coords[1:3]).length
-        length, width = max(side_a, side_b), min(side_a, side_b)
-
-        # Compare against the ideal shapes themselves, not merely their areas: an
-        # arbitrary blob can share an obround's area ratio without being one. The old
-        # gate (rect_fit >= 0.95) recognised only skinny slots — an obround fills
-        # 1 - 0.2146*(W/L) of its box, so a fat one (W/L ~ 0.46) reaches just 0.900 and
-        # fell through to "freeform", where the -0.3 penalty auto-rejected it.
-        rect_fit = area / mrr.area
-        obround_fit = _shape_fit(poly, ideal_obround(mrr, length, width))
+    fits = _box_fits(poly)
+    rect_fit = 0.0
+    if fits is not None:
+        # The old gate (rect_fit >= 0.95) recognised only skinny slots — an obround
+        # fills 1 - 0.2146*(W/L) of its box, so a fat one (W/L ~ 0.46) reaches just
+        # 0.900 and fell through to "freeform", where the -0.3 penalty auto-rejected it.
+        rect_fit, obround_fit, length, width = fits
         fit = max(rect_fit, obround_fit)
         if fit >= SLOT_FIT_THRESHOLD:
             dims = {
@@ -326,8 +427,6 @@ def _classify(poly: Polygon) -> tuple[str, float, dict]:
                 "width_mm": round(width * PT_TO_MM, 2),
             }
             return "slot", min(fit, 1.0), dims
-    else:
-        rect_fit = 0.0
 
     b = poly.bounds
     dims = {
@@ -417,6 +516,10 @@ def build_candidates(
                 source=source,
             )
         )
+
+    # A notch is open to the part's edge, so it is never an enclosed loop or face —
+    # it is read off the part outline's concavities instead.
+    candidates.extend(_notch_candidates(inner, source))
     return candidates
 
 

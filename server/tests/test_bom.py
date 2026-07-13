@@ -30,7 +30,14 @@ class FakeCutout:
     """Stands in for a Cutout row: build_rows only touches these fields."""
 
     def __init__(
-        self, poly, cid=1, status="approved", kind="hole", page_id=1, confidence=0.98
+        self,
+        poly,
+        cid=1,
+        status="approved",
+        kind="hole",
+        page_id=1,
+        confidence=0.98,
+        measured_dims_json=None,
     ):
         self.id = cid
         self.page_id = page_id
@@ -39,6 +46,7 @@ class FakeCutout:
         self.confidence = confidence
         self.geometry_wkt = poly.wkt
         self.edited_geometry_wkt = None
+        self.measured_dims_json = measured_dims_json
 
 
 # --- shape classification ---------------------------------------------------
@@ -74,6 +82,32 @@ def test_rectangle_and_obround_of_equal_size_have_different_cut_lengths():
 def test_notch_kind_is_preserved_over_geometry():
     m = shape_metrics(rectangle(20.0, 10.0), kind="notch")
     assert m["shape"] == "notch"
+    assert m["dims"]["length_mm"] == pytest.approx(20.0, abs=0.05)
+    assert m["dims"]["width_mm"] == pytest.approx(10.0, abs=0.05)
+    # without the detector's hint, the closed perimeter is the only honest fallback
+    assert m["cut_length_mm"] == pytest.approx(60.0, rel=0.01)
+
+
+def test_notch_burn_length_excludes_the_mouth():
+    """The detector measured 40mm of actual burn (two walls + floor); the mouth of
+    the notch is open to the part's edge and is never cut."""
+    m = shape_metrics(rectangle(20.0, 10.0), kind="notch", cut_hint_mm=40.0)
+    assert m["cut_length_mm"] == 40.0
+
+
+def test_bom_uses_notch_burn_length_until_geometry_is_edited():
+    c = FakeCutout(
+        rectangle(20.0, 10.0),
+        kind="notch",
+        measured_dims_json='{"length_mm": 20.0, "width_mm": 10.0, "cut_length_mm": 40.0}',
+    )
+    rows = build_rows([c])
+    assert rows[0]["cut_length_each_mm"] == 40.0
+
+    # an operator reshaping the notch invalidates the detector's measurement
+    c.edited_geometry_wkt = rectangle(22.0, 10.0).wkt
+    rows = build_rows([c])
+    assert rows[0]["cut_length_each_mm"] == pytest.approx(64.0, rel=0.01)
 
 
 def test_irregular_falls_back_to_polygon_perimeter():
