@@ -5,7 +5,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import bom, cutouts, documents, export, health, jobs, projects, telemetry
+from app.api import (
+    bom,
+    cutouts,
+    documents,
+    export,
+    health,
+    jobs,
+    projects,
+    tables,
+    telemetry,
+)
 from app.config import settings
 from app.db import session as db_session
 from app.db.migrate import add_missing_columns
@@ -49,6 +59,7 @@ app.include_router(jobs.router)
 app.include_router(cutouts.router)
 app.include_router(bom.router)
 app.include_router(projects.router)
+app.include_router(tables.router)
 app.include_router(export.router)
 app.include_router(telemetry.router)
 app.include_router(events.router)

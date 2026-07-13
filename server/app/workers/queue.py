@@ -1,6 +1,6 @@
 import asyncio
 
-from app.extraction.service import execute_job
+from app.workers.dispatch import execute
 from app.ws.events import broker
 
 
@@ -33,8 +33,8 @@ class JobWorker:
             job_id = await self._queue.get()
             emit = lambda e: broker.publish_threadsafe(job_id, e)  # noqa: E731
             try:
-                await asyncio.to_thread(execute_job, job_id, emit)
-            except Exception as e:  # execute_job records its own failures
+                await asyncio.to_thread(execute, job_id, emit)
+            except Exception as e:  # the job executors record their own failures
                 emit({"type": "job_failed", "job_id": job_id, "error": str(e)})
 
 

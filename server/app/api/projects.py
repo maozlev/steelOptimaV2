@@ -12,8 +12,12 @@ from app.db.models import (
     Page,
     Project,
 )
+from app.config import settings
 from app.db.session import get_db
 from app.ingestion.service import DuplicateDocumentError, ingest_document
+from app.schemas.jobs import JobOut
+from app.tables.service import create_table_job
+from app.workers.queue import worker
 from app.schemas.documents import DocumentDetailOut
 from app.schemas.projects import (
     ProjectDetailOut,
@@ -197,4 +201,32 @@ async def upload_project_document(
     tracker.emit(db, "project_document_added", entity_id=doc.id)
     db.commit()
     db.refresh(doc)
+    if settings.table_autorun_on_upload:
+        job = create_table_job(db, doc)
+        worker.enqueue(job.id)
     return doc
+
+
+@router.post(
+    "/projects/{project_id}/table-jobs", response_model=list[JobOut], status_code=202
+)
+def create_project_table_jobs(project_id: int, db: Session = Depends(get_db)):
+    """(Re)scan every document in the project that isn't already queued/running."""
+    project = _get_project(db, project_id)
+    jobs = []
+    for doc in project.documents:
+        busy = (
+            db.query(ExtractionJob.id)
+            .filter(
+                ExtractionJob.document_id == doc.id,
+                ExtractionJob.kind == "tables",
+                ExtractionJob.status.in_(["queued", "running"]),
+            )
+            .first()
+        )
+        if busy:
+            continue
+        job = create_table_job(db, doc)
+        worker.enqueue(job.id)
+        jobs.append(JobOut.model_validate(job))
+    return jobs

@@ -1,0 +1,18 @@
+{
+  "comment": "Ground truth read off the sheet's own table crops (tables/833.1-01-20-table.png). Page is rotated 270 - bboxes are display-space pt.",
+  "page_rotation": 270,
+  "tables": [
+    {
+      "name": "concrete-components",
+      "rows": 7,
+      "cols": 8,
+      "bbox": [2237, 1218, 2793, 1488]
+    },
+    {
+      "name": "piles",
+      "rows": 12,
+      "cols": 7,
+      "bbox": [2285, 1571, 2793, 2019]
+    }
+  ]
+}

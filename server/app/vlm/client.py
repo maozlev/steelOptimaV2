@@ -31,6 +31,21 @@ class VlmResult:
         return self.verdict is not None
 
 
+@dataclass
+class VlmJsonResult:
+    """A schema-forced JSON reply for callers with their own pydantic model."""
+
+    data: dict | None
+    raw_response: str | None
+    latency_ms: int
+    prompt_hash: str
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.data is not None
+
+
 class OllamaVlmClient:
     def __init__(
         self,
@@ -53,8 +68,20 @@ class OllamaVlmClient:
             for m in models
         )
 
-    def classify_crop(self, crop_png: bytes, prompt: str | None = None) -> VlmResult:
-        prompt = prompt or CLASSIFY_CROP_PROMPT
+    def chat_json(
+        self,
+        image_png: bytes,
+        prompt: str,
+        schema: dict,
+        validate=None,
+    ) -> VlmJsonResult:
+        """One image + prompt in, schema-forced JSON out.
+
+        `validate` (dict -> None, raising on bad data) runs inside the retry loop so
+        a reply that parses but fails validation is retried like a parse failure.
+        """
+        import json
+
         prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
         payload = {
             "model": self.model,
@@ -63,10 +90,10 @@ class OllamaVlmClient:
                 {
                     "role": "user",
                     "content": prompt,
-                    "images": [base64.b64encode(crop_png).decode()],
+                    "images": [base64.b64encode(image_png).decode()],
                 }
             ],
-            "format": VERDICT_SCHEMA,
+            "format": schema,
             "stream": False,
             "options": {"temperature": 0},
         }
@@ -80,19 +107,34 @@ class OllamaVlmClient:
                 )
                 r.raise_for_status()
                 raw = r.json().get("message", {}).get("content")
-                verdict = VlmVerdict.model_validate_json(_strip_fences(raw))
-                return VlmResult(
-                    verdict=verdict,
+                data = json.loads(_strip_fences(raw))
+                if validate is not None:
+                    validate(data)
+                return VlmJsonResult(
+                    data=data,
                     raw_response=raw,
                     latency_ms=int((time.time() - t0) * 1000),
                     prompt_hash=prompt_hash,
                 )
             except Exception as e:
                 error = f"{type(e).__name__}: {e}"
-        return VlmResult(
-            verdict=None,
+        return VlmJsonResult(
+            data=None,
             raw_response=raw,
             latency_ms=int((time.time() - t0) * 1000),
             prompt_hash=prompt_hash,
             error=error,
+        )
+
+    def classify_crop(self, crop_png: bytes, prompt: str | None = None) -> VlmResult:
+        prompt = prompt or CLASSIFY_CROP_PROMPT
+        result = self.chat_json(
+            crop_png, prompt, VERDICT_SCHEMA, validate=VlmVerdict.model_validate
+        )
+        return VlmResult(
+            verdict=VlmVerdict.model_validate(result.data) if result.ok else None,
+            raw_response=result.raw_response,
+            latency_ms=result.latency_ms,
+            prompt_hash=result.prompt_hash,
+            error=result.error,
         )

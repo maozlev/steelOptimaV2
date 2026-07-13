@@ -22,6 +22,9 @@ MERGE_GAP_PT = 3.0  # collinear segments closer than this are one stroked rule
 EXTENT_IOU = 0.75  # H rules with interval-IoU above this belong to one table
 V_COVERAGE = 0.55  # a column rule must span this fraction of the table band
 MIN_CELL_PT = 3.5  # degenerate columns/rows below this are snapping artifacts
+# a real table row is text-height plus padding; a sheet frame or drawing viewport
+# also forms a "grid" of rules, but its rows are hundreds of points tall
+MAX_MEDIAN_ROW_PT = 80.0
 NESTED_CONTAINMENT = 0.85  # candidate mostly inside another is its sub-grid
 
 
@@ -164,15 +167,18 @@ def _split_bands(
     """
     x_lo = min(r[1] for r in family)
     x_hi = max(r[2] for r in family)
-    in_band = [
-        v for v in vs if x_lo - SNAP_PT <= v[0] <= x_hi + SNAP_PT
+    # interior rules only: a sheet frame's own borders (and one stray panel divider)
+    # must not stitch the whole page into a single band — real tables have at least
+    # two column separators strictly inside their width
+    interior = [
+        v for v in vs if x_lo + MIN_CELL_PT < v[0] < x_hi - MIN_CELL_PT
     ]
 
     bands: list[list[tuple[float, float, float]]] = [[family[0]]]
     for a, b in zip(family, family[1:]):
         lo, hi = a[0], b[0]
         bridging = sum(
-            1 for v in in_band if v[1] <= lo + SNAP_PT and v[2] >= hi - SNAP_PT
+            1 for v in interior if v[1] <= lo + SNAP_PT and v[2] >= hi - SNAP_PT
         )
         if bridging >= 2:
             bands[-1].append(b)
@@ -213,6 +219,9 @@ def _grid_from_band(
     col_edges = _dedupe_edges(col_xs)
     row_edges = _dedupe_edges([r[0] for r in band])
     if len(col_edges) < 3 or len(row_edges) < 3:
+        return None
+    heights = sorted(b - a for a, b in zip(row_edges, row_edges[1:]))
+    if heights[len(heights) // 2] > MAX_MEDIAN_ROW_PT:
         return None
     return TableGrid(
         bbox=(col_edges[0], row_edges[0], col_edges[-1], row_edges[-1]),

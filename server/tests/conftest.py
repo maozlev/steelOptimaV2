@@ -30,6 +30,8 @@ def client(tmp_path_factory):
     settings.ensure_dirs()
     # keep pipeline tests offline/deterministic; VLM tests opt in per job
     settings.vlm_enabled = False
+    # uploads must not fire OCR jobs behind the API tests' backs
+    settings.table_autorun_on_upload = False
 
     import app.db.session as db_session
     from sqlalchemy import create_engine

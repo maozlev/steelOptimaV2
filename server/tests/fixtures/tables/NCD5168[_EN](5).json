@@ -1,0 +1,47 @@
+{
+  "comment": "Israel Electric steel tension pole BOM. 30 data rows (items 801-830, printed bottom-up); the header row sits BELOW the data rows and outside the detected grid. Printed footer: Total Weight: 3814.4 kg.",
+  "page_rotation": 0,
+  "tables": [
+    {
+      "name": "bom",
+      "rows": 30,
+      "cols": 7,
+      "bbox": [2760, 1728, 3296, 2239],
+      "column_roles": ["item_no", "qty", "description", "unit_length", "total_length", "total_weight", "other"],
+      "length_unit": "mm",
+      "declared_total_weight_kg": 3814.4,
+      "cells": [
+        ["830", "8", "Reinforcement THK 6 mm", "80x40", "0.0256 m²", "1.2", "WELDED AS MARKED"],
+        ["829", "8", "Connection Plate THK 14 mm", "450x174", "0.3915 m²", "43.0", "WELDED AS MARKED"],
+        ["828", "4", "Horizontal L60x60x6", "1052", "4208", "22.8", ""],
+        ["827", "8", "Horizontal L60x60x6", "743", "5944", "32.2", ""],
+        ["826", "8", "Diagonal L60x60x6", "1357", "10856", "58.8", ""],
+        ["825", "4", "Horizontal L60x60x6", "2077", "8308", "45.0", ""],
+        ["824", "8", "Horizontal L60x60x6", "1466", "11728", "63.6", ""],
+        ["823", "8", "Diagonal L60x60x6", "1805", "14440", "78.3", ""],
+        ["822", "4", "Horizontal L70x70x7", "3099", "12396", "91.5", ""],
+        ["821", "8", "Horizontal L60x60x6", "2188", "17504", "94.9", ""],
+        ["820", "8", "Diagonal L60x60x6", "2396", "19168", "103.9", ""],
+        ["819", "8", "Diagonal L60x60x6", "2380", "19040", "103.2", ""],
+        ["818", "4", "Horizontal L70x70x7", "2619", "10476", "77.3", ""],
+        ["817", "8", "Horizontal L60x60x6", "1896", "15168", "82.2", ""],
+        ["816", "8", "Diagonal L60x60x6", "1552", "12416", "67.3", ""],
+        ["815", "4", "Horizontal L60x60x6", "1292", "5168", "28.0", ""],
+        ["814", "8", "Horizontal L60x60x6", "953", "7624", "41.3", ""],
+        ["813", "4", "Horizontal L80x80x8", "3907", "15628", "151.0", ""],
+        ["812", "1", "Horizontal L120x120x11", "5842", "5842", "116.3", ""],
+        ["811", "4", "Horizontal L70x70x7", "2864", "11456", "84.5", ""],
+        ["810", "4", "Horizontal L70x70x7", "2864", "11456", "84.5", ""],
+        ["809", "4", "Connection Plate THK 12 mm", "345x310", "0.4278 m²", "40.3", ""],
+        ["808", "4", "Diagonal L90x90x9", "5931", "23724", "289.4", ""],
+        ["807", "4", "Diagonal L90x90x9", "5931", "23724", "289.4", ""],
+        ["806", "4", "Diagonal L70x70x7", "4370", "17480", "129.0", ""],
+        ["805", "4", "Diagonal L70x70x7", "4370", "17480", "129.0", ""],
+        ["804", "4", "Connection Plate THK 16 mm", "890x185", "0.6495 m²", "81.6", ""],
+        ["803", "4", "Connection Plate THK 16 mm", "890x185", "0.6495 m²", "81.6", ""],
+        ["802", "2", "Leg L160x160x15", "9000", "18000", "651.6", ""],
+        ["801", "2", "Leg L160x160x15", "9000", "18000", "651.6", ""]
+      ]
+    }
+  ]
+}
