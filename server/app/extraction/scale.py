@@ -47,6 +47,10 @@ DIAMETER_MARK = re.compile(r"^[⌀ØΦ�¢]")
 # A label is written ON its dimension line. Extension lines, ticks and arrowheads are
 # short; a dimension line spans the thing it measures.
 MAX_LABEL_TO_LINE_PT = 36.0
+# ...but on a big sheet everything is bigger, including that gap. The label's own text
+# height is the only ruler that travels: a dimension label sits within a few text-heights
+# of the line it belongs to, on an A3 and on a 2.5-metre plot alike.
+LABEL_REACH_IN_TEXT_HEIGHTS = 3.0
 MIN_DIMENSION_LINE_PT = 20.0
 # a Ø-marked callout may sit some way from the bore it points at
 MAX_CALLOUT_DISTANCE_PT = 400.0
@@ -169,8 +173,15 @@ def _leader_target(
     return None
 
 
-def _labels(page: fitz.Page) -> list[tuple[float, bool, Point]]:
-    """(value, is_diameter, position) for every number written on the sheet."""
+def _labels(page: fitz.Page) -> list[tuple[float, bool, Point, float]]:
+    """(value, is_diameter, position, text height) for every number on the sheet.
+
+    The text height comes back because it is the only page-size-independent ruler we
+    have. A (3) is plotted on a 2540x1504mm sheet — six times the size of the A3s — and
+    everything on it, including the gap between a dimension label and its line, is
+    proportionally larger. A fixed 36pt tolerance threw away 7128, 2857, 3397 and 300 as
+    "too far from any line", leaving one mismatched label to invent a scale from.
+    """
     out = []
     for x0, y0, x1, y1, text, *_ in page.get_text("words"):
         t = text.strip()
@@ -181,6 +192,7 @@ def _labels(page: fitz.Page) -> list[tuple[float, bool, Point]]:
                     float(m.group(1).replace(",", ".")),
                     bool(DIAMETER_MARK.match(t)),
                     Point((x0 + x1) / 2, (y0 + y1) / 2),
+                    max(y1 - y0, 1.0),
                 )
             )
     return out
@@ -215,9 +227,14 @@ def infer_from_geometry(page: fitz.Page, candidates: list[Candidate]) -> list[fl
         if MIN_SCALE <= r <= MAX_SCALE:
             ratios.append(r)
 
-    for value, is_diameter, at in _labels(page):
+    for value, is_diameter, at, text_h in _labels(page):
+        # How far a label may sit from its line scales with the drawing: the label's own
+        # text height is the ruler. A (3) is plotted on a 2.5-metre sheet, where the gap
+        # is 54-95pt; an A3 sheet's is under 20. A constant threw the big sheet away.
+        reach = max(MAX_LABEL_TO_LINE_PT, text_h * LABEL_REACH_IN_TEXT_HEIGHTS)
+
         # reading 1: written on the dimension line that spans what it measures
-        near_lines = [line for line in lines if line.distance(at) <= MAX_LABEL_TO_LINE_PT]
+        near_lines = [line for line in lines if line.distance(at) <= reach]
         if near_lines:
             line = max(near_lines, key=lambda ln: ln.length)
             keep(value / (line.length * PT_TO_MM))

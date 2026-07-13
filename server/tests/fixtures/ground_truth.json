@@ -82,12 +82,12 @@
   "A (3).pdf": {
     "part": "Beam",
     "sheet_scale_text": null,
-    "scale": null,
-    "note": "UNRESOLVED. No Scale text and no Ø label. Sheet carries 7128/3397/2857/300/216 mm labels, so it is certainly not 1:1. Needs the dimension-line-length method. Counts are known; sizes are not.",
+    "scale": 7.75,
+    "note": "Confirmed by Maoz 2026-07-13: the holes are Ø40. The sheet prints no scale, so it is back-solved from that — 40 / 5.16mm of paper = 7.75. Plotted on a 2540x1504mm sheet, six times the size of the A3s. The three big dimension labels (7128 / 3397 / 2857) imply 7.23 / 7.53 / 7.66 — a 6% spread, none of them 7.75, so the dimension-LINE lengths on this sheet are being measured several percent long. The resolver therefore refuses to be confident and asks the operator, which is correct. Do not tune the line measurement against this until that is understood.",
     "cutouts": [
-      { "shape": "circle", "diameter_mm": null, "qty": 128, "paper_diameter_mm": 5.16 },
-      { "shape": "rectangle", "length_mm": null, "width_mm": null, "qty": 19, "paper_dims_mm": [62.31, 6.06] },
-      { "shape": "rectangle", "length_mm": null, "width_mm": null, "qty": 1, "paper_dims_mm": [235.11, 6.06] }
+      { "shape": "circle", "diameter_mm": 40.0, "qty": 128, "source": "confirmed by Maoz" },
+      { "shape": "rectangle", "length_mm": 483.0, "width_mm": 47.0, "qty": 19, "source": "62.31 x 6.06mm of paper x 7.75" },
+      { "shape": "rectangle", "length_mm": 1823.0, "width_mm": 47.0, "qty": 1, "source": "the one wider slot; 235.11 x 6.06mm of paper x 7.75" }
     ]
   },
 
