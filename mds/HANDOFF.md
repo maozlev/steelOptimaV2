@@ -72,21 +72,64 @@ When in doubt, surface it — never silently drop it.
 
 ## The five ideas the whole thing rests on
 
-### 1. Separate the ink before you polygonize anything
+### 1. Decide how to READ the drawing, before polygonizing anything
 
 The original extractor polygonized *every stroke on the page* — part edges, leader lines,
 arrowheads, glyph outlines — into one soup, then tried to sort cutouts back out by shape.
 **That cannot work.** The `Ø` in a label "Ø290 THRU" is drawn as vector paths and *is*,
 geometrically, a circle. On the gear it was auto-approved at 0.98 as a Ø3.1 hole while the
-real Ø290 bore was rejected. No threshold will ever separate a glyph from a hole by shape.
+real Ø290 bore was rejected. No threshold will ever separate a glyph from a hole by shape,
+because they are the same shape. But the draughtsman already marked which ink is which.
 
-But CAD exports say which ink is which, and nobody was reading it. `app/extraction/ink.py`:
+**`app/extraction/ink.py` is where the pipeline decides how to read a page.** Everything
+downstream depends on it, and a wrong decision here looks like a detection bug everywhere
+else. The decision is made from evidence *on the page* — never from the filename, the part,
+or how "simple" the drawing looks.
 
-- **Colour**: part geometry black; dimensions/leaders grey or olive; frame light grey.
-- **Stroke width** (when the sheet is one colour): ISO draws part edges thick, dimension /
-  extension / leader / centre lines thin.
+#### The decision tree (`split_ink`)
 
-Roughly half the drawings use each convention. **The convention is detected per page.**
+1. **Colour.** Classify each stroked path by `max(r,g,b)`:
+   `< 0.4` → **geometry** (part edges: black, or the 0.25 grey A (3) uses) ·
+   `>= 0.6` → **frame** (sheet border, discarded) ·
+   otherwise → **annotation** (dimension/leader lines: 0.5 grey, or olive).
+   Fill-only paths (arrowheads, solid symbols) are always annotation.
+2. **Is the page actually colour-coded?** Only if a meaningful share of its *strokes* land
+   in annotation (`MIN_ANNOTATION_SHARE`). **This test is the whole ballgame** — see the
+   mistake below.
+3. **Stroke width.** If colour says nothing, fall back to width. ISO draws part edges
+   **thick** and dimension / extension / leader / centre lines **thin**. The cut is the
+   thinnest width present × `THIN_TO_THICK_RATIO`.
+4. **Fail safe.** If the page follows neither convention, treat all non-frame ink as
+   geometry. We are then exactly where we were before this module existed: noisier, but
+   **never blind**. This filter must never reduce a page to nothing.
+
+Roughly half the sample drawings take each path.
+
+#### The diagnostic — run this first on any new drawing
+
+    uv run python tools/inspect_ink.py                    # every sample
+    uv run python tools/inspect_ink.py ../pdfs/foo.pdf    # one file
+
+It prints the convention chosen, **the evidence for it**, the resulting ink split, what was
+detected, and the scale. When a new drawing behaves oddly, look here before touching any
+threshold — the fault is usually the convention decision, not the geometry.
+
+#### The mistake that cost a whole cycle
+
+Doc_HK3573 has **exactly one** coloured stroke on the sheet (a highlight box). An earlier
+version of step 2 let that single path convince it the page was colour-coded, which
+silently disabled the width fallback. I then swept the width threshold across four values,
+got four identical results, and reported to Maoz that width separation "did not help" — and
+even wrote a comment telling the next person not to try it. **It was never switched on.**
+
+> If a threshold sweep gives *identical* results at every setting, the knob is not connected.
+
+#### What this is NOT
+
+It is **not** a classifier of "simple vs complex" drawings, and it must not become one. The
+axis that matters is the **convention**, which is measurable. Complexity is not, and the two
+do not line up: A (3) and A (4) share their convention with the washer and the gasket.
+Supporting a new drafting house means adding a **detector here**, not a second pipeline.
 
 ### 2. Scale, or you ship wrong parts
 

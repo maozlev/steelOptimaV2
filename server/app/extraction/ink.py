@@ -1,24 +1,56 @@
-"""Separate part geometry from annotation, before any of it is polygonized.
+"""Decide HOW TO READ a drawing, then separate part geometry from annotation.
 
-The extractor used to polygonize every stroke on the page - part edges, leader lines,
-arrowheads and glyph outlines alike - and then try to sort cutouts back out by shape
-downstream. That cannot work: the `Ø` character in a label "Ø290 THRU" is drawn as
-vector paths and is, geometrically, a circle. Shape alone will never tell it apart from
-a small hole, and on ASH-071222 it was auto-approved at 0.98 while the real Ø290 bore
-was rejected.
+This is where the pipeline chooses which of the drafting conventions a page follows. Get
+it wrong and everything downstream is garbage, so the decision is made from evidence on
+the page, never from the file name, the part, or how "simple" the drawing looks.
 
-But CAD exports already say which ink is which, by stroke colour:
+WHY IT EXISTS
+The extractor used to polygonize every stroke on the page — part edges, leader lines,
+arrowheads and glyph outlines alike — and then try to sort cutouts back out by shape.
+That cannot work: the `Ø` in a label "Ø290 THRU" is drawn as vector paths and IS,
+geometrically, a circle. On ASH-071222 it was auto-approved at 0.98 as a Ø3.1 hole while
+the drawing's only real bore was rejected. No threshold separates a glyph from a hole,
+because they are the same shape. But the draughtsman already marked which ink is which.
 
-    part geometry      black   (0, 0, 0)
-    dimensions/leaders grey    (0.5, 0.5, 0.5)   or olive (0.5, 0.5, 0)
-    sheet frame        light   (0.75, 0.75, 0.75)
+THE DECISION TREE  (split_ink)
 
-so we read it. Filtering to geometry ink removes glyphs, leader-line triangles and
-arrowheads at source instead of fighting them with thresholds afterwards.
+    1. COLOUR.  Classify every stroked path by max(r,g,b):
+           < 0.4   -> geometry    part edges (black, or the 0.25 grey A (3) uses)
+          >= 0.6   -> frame       the sheet border, discarded
+           else    -> annotation  dimension/leader lines (0.5 grey, or olive)
+       Fill-only paths (arrowheads, solid symbols) are always annotation.
 
-This is a heuristic about a convention, not a law, so it fails safe: if a page has no
-dark ink at all (a mono export, an unusual palette), everything non-frame is treated as
-geometry and we are no worse off than before.
+    2. Is the page ACTUALLY colour-coded?  Only if a meaningful share of its STROKES land
+       in annotation (>= MIN_ANNOTATION_SHARE). This test is the whole ballgame: Doc_HK3573
+       has exactly ONE coloured stroke on the sheet — a highlight box — and an earlier
+       version of this check let that single path convince it the page was colour-coded,
+       silently disabling everything below. I then swept the width threshold across four
+       values, got four identical results, and reported that width separation "did not
+       help". It was never switched on. If a sweep gives identical results at every
+       setting, the knob is not connected.
+
+    3. WIDTH.  If colour says nothing, fall back to stroke width. ISO drafting draws
+       visible part edges THICK and dimension / extension / leader / centre lines THIN.
+       Doc_HK3573 is wholly black: 378 paths at 0.36 against 81 at 0.72-1.44. The cut is
+       the thinnest width present x THIN_TO_THICK_RATIO.
+
+    4. FAIL SAFE.  If the page follows neither convention, treat all non-frame ink as
+       geometry. We are then exactly where we were before this module existed — noisier,
+       but never blind. NEVER let this filter reduce a page to nothing: a missed hole
+       costs a part, a false positive costs a click.
+
+Roughly half the sample drawings take each path. `tools/inspect_ink.py` prints which one a
+given drawing takes and why — run it first when a new drawing behaves oddly.
+
+WHAT THIS IS NOT
+It is not a classifier of "simple vs complex" drawings, and it must not become one. The
+axis that matters is the CONVENTION, which is measurable; complexity is not, and the two
+do not line up — A (3) and A (4) share their convention with the washer and the gasket.
+Adding support for a new drafting house means adding a DETECTOR here, not a second
+pipeline.
+
+Annotation paths are returned, not discarded: scale.py measures the sheet scale from the
+dimension lines.
 """
 
 import fitz
