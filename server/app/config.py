@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     finalize_threshold: float = 0.90
 
     # material-table pipeline
+    # VLM assist is OFF by default for table jobs: on this hardware qwen3.5:9b
+    # takes 1-4 MINUTES per table crop (partially CPU-resident even at 8k ctx),
+    # while the deterministic path reads 210/210 cells on the eval and anything
+    # it cannot read is flagged for a human anyway. Opt in per job with
+    # {"vlm": true} when a Hebrew-heavy batch justifies the wait.
+    table_vlm_enabled: bool = False
     # zoom 12 (864 dpi) is what the rec-only OCR was tuned at; 600 dpi fragments
     table_ocr_dpi: int = 864
     # numeric cells below this OCR confidence get a VLM second read

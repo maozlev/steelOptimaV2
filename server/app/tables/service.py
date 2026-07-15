@@ -411,7 +411,7 @@ def execute_table_job(job_id: int, emit: Emit = lambda e: None) -> None:
         emit({"type": "job_started", "job_id": job_id})
 
         params = json.loads(job.params_json or "{}")
-        vlm_on = params.get("vlm", settings.vlm_enabled)
+        vlm_on = params.get("vlm", settings.vlm_enabled and settings.table_vlm_enabled)
         client = OllamaVlmClient() if vlm_on else None
         if client is not None and not client.available():
             client = None

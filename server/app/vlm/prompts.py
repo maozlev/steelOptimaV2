@@ -104,7 +104,14 @@ def classify_table_prompt(n_cols: int) -> str:
         "header_rows = how many grid rows are column headings; header_position = "
         "whether those headings are at the top or the BOTTOM of the table (some CAD "
         "tables build upward). length_unit = the unit its length/diameter columns "
-        "use. title = the table's caption if visible, else ''."
+        "use. title = the table's caption if visible, else ''.\n\n"
+        # this ollama build only enforces the `format` schema reliably in thinking
+        # mode; without an explicit demand the model writes prose and the call is wasted
+        "Respond ONLY with a single JSON object, no explanation, no markdown: "
+        '{"kind": "<materials|coordinates|other>", "title": "<str>", '
+        f'"column_roles": [<exactly {n_cols} strings>], "header_rows": <int>, '
+        '"header_position": "<top|bottom>", "length_unit": "<mm|cm|m>", '
+        '"confidence": <0..1>}'
     )
 
 
@@ -124,7 +131,9 @@ def transcribe_row_prompt(n_cols: int) -> str:
         "EXACTLY as printed, LEFT to RIGHT in the image, into `values` (exactly "
         f"{n_cols} strings). Keep digits, decimal points, x separators and units "
         "verbatim; use '' for an empty cell. Hebrew text must be transcribed as "
-        "written. Do not compute, correct or reformat anything."
+        "written. Do not compute, correct or reformat anything.\n"
+        "Respond ONLY with a single JSON object, no explanation: "
+        f'{{"values": [<exactly {n_cols} strings>]}}'
     )
 
 
@@ -135,7 +144,9 @@ def transcribe_column_prompt(n_rows: int) -> str:
         "EXACTLY as printed, TOP to BOTTOM, into `values` (exactly "
         f"{n_rows} strings). The text may be Hebrew (read each cell right-to-left) "
         "or English. Use '' for an empty cell. Do not compute, correct or reformat "
-        "anything."
+        "anything.\n"
+        "Respond ONLY with a single JSON object, no explanation: "
+        f'{{"values": [<exactly {n_rows} strings>]}}'
     )
 
 
