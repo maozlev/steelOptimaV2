@@ -22,6 +22,7 @@ import type {
   ProjectDetailOut,
   ProjectListOut,
   ProjectOut,
+  ProjectQueueOut,
   ProjectSummary,
   TableKind,
   TelemetrySummary,
@@ -128,10 +129,15 @@ export const api = {
 
   startTableJob: (docId: number) =>
     request<JobOut>(`/api/documents/${docId}/table-jobs`, json("POST", {})),
-  startProjectTableJobs: (projectId: number) =>
-    request<JobOut[]>(`/api/projects/${projectId}/table-jobs`, {
-      method: "POST",
-    }),
+  startProjectTableJobs: (projectId: number, onlyFailed = false) =>
+    request<JobOut[]>(
+      `/api/projects/${projectId}/table-jobs${onlyFailed ? "?only_failed=true" : ""}`,
+      { method: "POST" },
+    ),
+  getProjectQueue: (projectId: number) =>
+    request<ProjectQueueOut>(`/api/projects/${projectId}/queue`),
+  cancelJob: (jobId: number) =>
+    request<JobOut>(`/api/jobs/${jobId}`, { method: "DELETE" }),
   listDocumentTables: (docId: number) =>
     request<MaterialTableOut[]>(`/api/documents/${docId}/tables`),
   getTable: (tableId: number) =>

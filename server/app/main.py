@@ -27,12 +27,22 @@ from app.workers.queue import worker
 from app.ws import events
 
 
-def _fail_orphaned_jobs() -> None:
+def _recover_orphaned_jobs() -> list[int]:
+    """A job caught RUNNING by a restart is lost mid-work and fails honestly;
+    jobs still QUEUED lost nothing — they re-enter the queue instead of dying.
+    Returns the ids to re-enqueue (in creation order, preserving FIFO)."""
     with db_session.SessionLocal() as db:
-        db.query(ExtractionJob).filter(
-            ExtractionJob.status.in_(["queued", "running"])
-        ).update({"status": "failed", "error": "server restarted"})
+        db.query(ExtractionJob).filter(ExtractionJob.status == "running").update(
+            {"status": "failed", "error": "server restarted mid-scan"}
+        )
+        requeue = [
+            job_id
+            for (job_id,) in db.query(ExtractionJob.id)
+            .filter(ExtractionJob.status == "queued")
+            .order_by(ExtractionJob.id)
+        ]
         db.commit()
+    return requeue
 
 
 @asynccontextmanager
@@ -42,9 +52,11 @@ async def lifespan(_app: FastAPI):
     # new columns on existing tables — so a schema change never means wiping the
     # operator's database and re-reviewing every drawing
     add_missing_columns(db_session.engine, Base)
-    _fail_orphaned_jobs()
+    requeue = _recover_orphaned_jobs()
     events.broker.reset()
     worker.start()
+    for job_id in requeue:
+        worker.enqueue(job_id)
     yield
     await worker.stop()
 

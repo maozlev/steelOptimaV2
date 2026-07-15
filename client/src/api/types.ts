@@ -331,3 +331,26 @@ export interface ChatMessageOut {
   content: string;
   created_at: string;
 }
+
+// --- per-project scan queue -------------------------------------------------
+
+export interface QueueEntry {
+  job_id: number;
+  document_id: number;
+  filename: string;
+  status: "queued" | "running" | "failed";
+  queue_position: number | null;
+  started_at: string | null;
+  error: string | null;
+}
+
+export interface ProjectQueueOut {
+  total_documents: number;
+  scanned: number;
+  running: QueueEntry[];
+  queued: QueueEntry[];
+  failed: QueueEntry[];
+  unscanned: { document_id: number; filename: string }[];
+  avg_scan_seconds: number | null;
+  eta_seconds: number | null;
+}

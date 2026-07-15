@@ -219,23 +219,121 @@ async def upload_project_document(
 @router.post(
     "/projects/{project_id}/table-jobs", response_model=list[JobOut], status_code=202
 )
-def create_project_table_jobs(project_id: int, db: Session = Depends(get_db)):
-    """(Re)scan every document in the project that isn't already queued/running."""
+def create_project_table_jobs(
+    project_id: int, only_failed: bool = False, db: Session = Depends(get_db)
+):
+    """(Re)scan documents that aren't already queued/running.
+
+    only_failed=true rescans just the documents whose LAST scan failed — the
+    queue panel's "retry failed" button, which must not burn time re-reading
+    documents that already scanned clean."""
     project = _get_project(db, project_id)
     jobs = []
     for doc in project.documents:
-        busy = (
-            db.query(ExtractionJob.id)
+        last = (
+            db.query(ExtractionJob)
             .filter(
-                ExtractionJob.document_id == doc.id,
-                ExtractionJob.kind == "tables",
-                ExtractionJob.status.in_(["queued", "running"]),
+                ExtractionJob.document_id == doc.id, ExtractionJob.kind == "tables"
             )
+            .order_by(ExtractionJob.id.desc())
             .first()
         )
-        if busy:
+        if last and last.status in ("queued", "running"):
+            continue
+        if only_failed and (last is None or last.status != "failed"):
             continue
         job = create_table_job(db, doc)
         worker.enqueue(job.id)
         jobs.append(JobOut.model_validate(job))
     return jobs
+
+
+@router.get("/projects/{project_id}/queue")
+def project_queue(project_id: int, db: Session = Depends(get_db)):
+    """The project's scan queue, as the operator should see it: what is being
+    scanned now, what is waiting (and where it stands in the global line),
+    what finished, what failed — plus an ETA from this project's own history."""
+    project = _get_project(db, project_id)
+    doc_by_id = {d.id: d for d in project.documents}
+
+    # latest table job per document decides that document's state
+    latest: dict[int, ExtractionJob] = {}
+    if doc_by_id:
+        for job in (
+            db.query(ExtractionJob)
+            .filter(
+                ExtractionJob.document_id.in_(doc_by_id),
+                ExtractionJob.kind == "tables",
+            )
+            .order_by(ExtractionJob.id)
+        ):
+            latest[job.document_id] = job
+
+    running = [j for j in latest.values() if j.status == "running"]
+    queued = sorted(
+        (j for j in latest.values() if j.status == "queued"), key=lambda j: j.id
+    )
+    done = [j for j in latest.values() if j.status == "done"]
+    failed = [j for j in latest.values() if j.status == "failed"]
+    unscanned = [d for d in project.documents if d.id not in latest]
+
+    # position in the GLOBAL line (other projects' jobs run ahead too)
+    global_queued_ids = [
+        job_id
+        for (job_id,) in db.query(ExtractionJob.id)
+        .filter(ExtractionJob.status == "queued")
+        .order_by(ExtractionJob.id)
+    ]
+    global_pos = {job_id: i + 1 for i, job_id in enumerate(global_queued_ids)}
+
+    # ETA from this project's own completed scans (fallback: any project's)
+    durations = [
+        (j.finished_at - j.started_at).total_seconds()
+        for j in done
+        if j.finished_at and j.started_at
+    ]
+    if not durations:
+        recent = (
+            db.query(ExtractionJob)
+            .filter(
+                ExtractionJob.kind == "tables",
+                ExtractionJob.status == "done",
+                ExtractionJob.finished_at.isnot(None),
+            )
+            .order_by(ExtractionJob.id.desc())
+            .limit(10)
+            .all()
+        )
+        durations = [
+            (j.finished_at - j.started_at).total_seconds()
+            for j in recent
+            if j.finished_at and j.started_at
+        ]
+    avg = sum(durations) / len(durations) if durations else None
+    remaining = len(queued) + len(running)
+    eta = round(avg * remaining) if avg and remaining else None
+
+    def _entry(job: ExtractionJob) -> dict:
+        doc = doc_by_id[job.document_id]
+        return {
+            "job_id": job.id,
+            "document_id": doc.id,
+            "filename": doc.filename,
+            "status": job.status,
+            "queue_position": global_pos.get(job.id),
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "error": job.error,
+        }
+
+    return {
+        "total_documents": len(project.documents),
+        "scanned": len(done),
+        "running": [_entry(j) for j in running],
+        "queued": [_entry(j) for j in queued],
+        "failed": [_entry(j) for j in failed],
+        "unscanned": [
+            {"document_id": d.id, "filename": d.filename} for d in unscanned
+        ],
+        "avg_scan_seconds": round(avg, 1) if avg else None,
+        "eta_seconds": eta,
+    }

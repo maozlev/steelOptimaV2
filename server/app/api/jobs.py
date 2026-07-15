@@ -42,6 +42,23 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
     return _job_out(db, job)
 
 
+@router.delete("/jobs/{job_id}", response_model=JobOut)
+def cancel_job(job_id: int, db: Session = Depends(get_db)):
+    """Cancel a QUEUED job. The worker checks status when it dequeues, so a
+    cancelled job is skipped for free. A running job cannot be cancelled — the
+    OCR thread has no safe interruption point — and finished jobs are history."""
+    job = db.get(ExtractionJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.status != "queued":
+        raise HTTPException(409, f"Job is {job.status}; only queued jobs cancel")
+    job.status = "failed"
+    job.error = "cancelled by user"
+    db.commit()
+    db.refresh(job)
+    return _job_out(db, job)
+
+
 @router.get("/pages/{page_id}/cutouts", response_model=list[CutoutOut])
 def list_cutouts(page_id: int, db: Session = Depends(get_db)):
     if not db.get(Page, page_id):

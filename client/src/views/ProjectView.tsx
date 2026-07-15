@@ -11,6 +11,7 @@ import MaterialSummaryTable, {
   exportSummaryCsv,
 } from "../components/MaterialSummaryTable";
 import OrdersPanel from "../components/OrdersPanel";
+import QueuePanel from "../components/QueuePanel";
 import UploadDropzone from "../components/UploadDropzone";
 
 const JOB_LABEL: Record<string, string> = {
@@ -176,11 +177,11 @@ export default function ProjectView({
         {tab === "documents" && (
           <div className="flex flex-col gap-4">
             <UploadDropzone onFile={enqueue} multiple />
-            {uploading && (
-              <div className="rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-300">
-                Uploading {uploading.done + 1} / {uploading.total}…
-              </div>
-            )}
+            <QueuePanel
+              projectId={projectId}
+              uploading={uploading}
+              onChanged={refresh}
+            />
             {project.documents.length === 0 ? (
               <p className="mt-6 text-center text-sm text-zinc-500">
                 No documents yet — drop this tender's PDFs above. Table scanning
