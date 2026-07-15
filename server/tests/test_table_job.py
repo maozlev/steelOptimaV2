@@ -74,3 +74,21 @@ def test_table_job_rerun_replaces(client, wait_job):
     tables = client.get(f"/api/documents/{doc['id']}/tables").json()
     # re-run replaced, not duplicated
     assert len([t for t in tables if t["n_rows"] == 30]) == 1
+
+
+def test_delete_document_with_tables(client, wait_job):
+    """A document that has been table-scanned must still delete cleanly — the
+    material_tables/rows and their crops reference jobs and pages, so a naive
+    delete hits a FOREIGN KEY constraint (regression: the delete 500'd)."""
+    pdf = TABLES_DIR / "833.1-01-20.pdf"
+    with open(pdf, "rb") as f:
+        doc = client.post(
+            "/api/documents", files={"file": (pdf.name, f, "application/pdf")}
+        ).json()
+    r = client.post(f"/api/documents/{doc['id']}/table-jobs", json={"vlm": False})
+    assert wait_job(client, r.json()["id"])["status"] == "done"
+    assert client.get(f"/api/documents/{doc['id']}/tables").json()  # tables exist
+
+    r = client.delete(f"/api/documents/{doc['id']}")
+    assert r.status_code == 204, r.text
+    assert client.get(f"/api/documents/{doc['id']}").status_code == 404

@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session
 from app.db.models import (
     Document,
     ExtractionJob,
+    MaterialPrice,
     MaterialRow,
     MaterialTable,
+    OrderPlan,
     Page,
     Project,
 )
@@ -167,6 +169,13 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
     # documents survive the project — they stay visible in the Documents view
     for doc in project.documents:
         doc.project_id = None
+    # prices and order plans belong to the project — they go with it
+    db.query(MaterialPrice).filter(
+        MaterialPrice.project_id == project_id
+    ).delete(synchronize_session=False)
+    db.query(OrderPlan).filter(
+        OrderPlan.project_id == project_id
+    ).delete(synchronize_session=False)
     db.delete(project)
     db.commit()
 

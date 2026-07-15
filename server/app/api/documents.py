@@ -5,7 +5,16 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.models import Cutout, Document, ExtractionJob, Page, TelemetryEvent, VlmCall
+from app.db.models import (
+    Cutout,
+    Document,
+    ExtractionJob,
+    MaterialRow,
+    MaterialTable,
+    Page,
+    TelemetryEvent,
+    VlmCall,
+)
 from app.db.session import get_db
 from app.ingestion.overlay import render_overlay
 from app.ingestion.service import (
@@ -208,11 +217,29 @@ def delete_document(doc_id: int, db: Session = Depends(get_db)):
     render_paths = [Path(p.render_path) for p in pages]
     original_path = Path(doc.path)
 
-    # delete child rows in FK order before cascade can handle them
+    # delete child rows in FK order before cascade can handle them.
+    # dependency chain: material_rows -> material_tables -> {pages, jobs};
+    # vlm_calls -> {jobs, cutouts, material_tables}; cutouts -> pages.
     jobs = db.query(ExtractionJob).filter_by(document_id=doc_id).all()
     job_ids = [j.id for j in jobs]
+    tables = (
+        db.query(MaterialTable).filter(MaterialTable.page_id.in_(page_ids)).all()
+        if page_ids
+        else []
+    )
+    table_ids = [t.id for t in tables]
+    table_crop_paths = [Path(t.crop_path) for t in tables if t.crop_path]
+
+    if table_ids:
+        db.query(MaterialRow).filter(
+            MaterialRow.table_id.in_(table_ids)
+        ).delete(synchronize_session=False)
     if job_ids:
         db.query(VlmCall).filter(VlmCall.job_id.in_(job_ids)).delete(synchronize_session=False)
+    if table_ids:
+        db.query(MaterialTable).filter(
+            MaterialTable.id.in_(table_ids)
+        ).delete(synchronize_session=False)
     if page_ids:
         db.query(Cutout).filter(Cutout.page_id.in_(page_ids)).delete(synchronize_session=False)
     for job in jobs:
@@ -221,6 +248,8 @@ def delete_document(doc_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     for p in render_paths:
+        p.unlink(missing_ok=True)
+    for p in table_crop_paths:
         p.unlink(missing_ok=True)
     original_path.unlink(missing_ok=True)
 
