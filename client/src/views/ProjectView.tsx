@@ -6,6 +6,7 @@ import type {
   ProjectSummary,
 } from "../api/types";
 import BidPanel from "../components/BidPanel";
+import ChatPanel from "../components/ChatPanel";
 import MaterialSummaryTable, {
   exportSummaryCsv,
 } from "../components/MaterialSummaryTable";
@@ -19,7 +20,7 @@ const JOB_LABEL: Record<string, string> = {
   failed: "FAILED",
 };
 
-type Tab = "documents" | "tables" | "summary" | "bid" | "orders";
+type Tab = "documents" | "tables" | "summary" | "bid" | "orders" | "chat";
 
 const KIND_STYLE: Record<string, string> = {
   materials: "bg-emerald-900/60 text-emerald-300",
@@ -162,6 +163,7 @@ export default function ProjectView({
         {tabButton("summary", "📋 Summary")}
         {tabButton("bid", "💰 Bid")}
         {tabButton("orders", "✂ Orders")}
+        {tabButton("chat", "💬 Chat")}
       </nav>
 
       {error && (
@@ -331,6 +333,16 @@ export default function ProjectView({
 
         {tab === "orders" && (
           <OrdersPanel projectId={projectId} summary={summary} />
+        )}
+
+        {tab === "chat" && (
+          <div className="flex h-full flex-col rounded border border-zinc-800 bg-zinc-950">
+            <ChatPanel
+              scope="project"
+              scopeId={projectId}
+              hint="Context: this project — its documents, materials, prices and order plans"
+            />
+          </div>
         )}
       </div>
     </div>

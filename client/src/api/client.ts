@@ -1,5 +1,7 @@
 import type {
   AggregateBom,
+  ChatMessageOut,
+  ChatScope,
   ConfigOut,
   CropIn,
   CutoutKind,
@@ -186,6 +188,11 @@ export const api = {
   listOrderPlans: (projectId: number) =>
     request<OrderPlanOut[]>(`/api/projects/${projectId}/order-plans`),
 
+  getChatMessages: (scope: ChatScope, scopeId: number) =>
+    request<ChatMessageOut[]>(`/api/chat/${scope}/${scopeId}/messages`),
+  clearChat: (scope: ChatScope, scopeId: number) =>
+    request<void>(`/api/chat/${scope}/${scopeId}/messages`, { method: "DELETE" }),
+
   telemetrySummary: (docId?: number) =>
     request<TelemetrySummary>(
       docId == null
@@ -197,6 +204,47 @@ export const api = {
     events: { type: string; entity_id?: number; payload?: object }[];
   }) => request<{ accepted: number }>("/api/telemetry/events", json("POST", batch)),
 };
+
+/** Ask the scoped chat a question, streaming the answer as it is generated.
+ *
+ * Not part of `api`: the answer arrives as chunked plain text (the model takes
+ * seconds to minutes on local hardware), so this reads the body stream and
+ * feeds each delta to `onDelta`. Returns the full answer.
+ */
+export async function sendChatMessage(
+  scope: ChatScope,
+  scopeId: number,
+  content: string,
+  onDelta: (text: string) => void,
+  signal?: AbortSignal,
+): Promise<string> {
+  const r = await fetch(`/api/chat/${scope}/${scopeId}/messages`, {
+    ...json("POST", { content }),
+    signal,
+  });
+  if (!r.ok || !r.body) {
+    let detail = r.statusText;
+    try {
+      detail = (await r.json()).detail ?? detail;
+    } catch {
+      /* not json */
+    }
+    throw new Error(detail);
+  }
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let full = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const text = decoder.decode(value, { stream: true });
+    if (text) {
+      full += text;
+      onDelta(text);
+    }
+  }
+  return full;
+}
 
 export const tableCropUrl = (tableId: number) => `/api/tables/${tableId}/crop`;
 

@@ -25,6 +25,8 @@ RowStatus = Enum(
     "auto_approved", "needs_review", "approved", "rejected", "edited", name="row_status"
 )
 PricingUnit = Enum("per_kg", "per_m", "per_unit", name="pricing_unit")
+ChatScope = Enum("document", "project", "summary", name="chat_scope")
+ChatRole = Enum("user", "assistant", name="chat_role")
 
 
 class Base(DeclarativeBase):
@@ -233,6 +235,28 @@ class OrderPlan(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
     params_json: Mapped[str] = mapped_column(Text)  # kerf, stock catalog, pieces
     result_json: Mapped[str] = mapped_column(Text)  # bars, order lines, waste, cost
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ChatMessage(Base):
+    """One turn of a scoped Q&A chat.
+
+    scope/scope_id pin the conversation to what it may talk about: a single
+    document, a single project, or the cross-project summary (scope_id 0).
+    The context itself is rebuilt fresh from the DB on every question — only
+    the conversation is stored, never a stale snapshot of the data.
+    """
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(ChatScope, index=True)
+    scope_id: Mapped[int] = mapped_column(Integer, index=True)
+    role: Mapped[str] = mapped_column(ChatRole)
+    content: Mapped[str] = mapped_column(Text)
+    # what the model was told when it answered; kept for debugging bad answers
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    context_chars: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

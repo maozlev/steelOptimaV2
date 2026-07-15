@@ -12,6 +12,7 @@ import { useJobEvents } from "../api/ws";
 import { polygonToWkt, rectToWkt } from "../api/wkt";
 import { sessionId, track } from "../telemetry";
 import BomPanel from "../components/BomPanel";
+import ChatPanel from "../components/ChatPanel";
 import ScaleBanner from "../components/ScaleBanner";
 import CutoutDetail from "../components/CutoutDetail";
 import CutoutSidebar, { ALL_STATUSES, type Filters } from "../components/CutoutSidebar";
@@ -49,7 +50,7 @@ export default function WorkspaceView({
   const [drawMode, setDrawMode] = useState<DrawMode>(null);
   const [addKind, setAddKind] = useState<CutoutKind>("hole");
   const [pendingPolygon, setPendingPolygon] = useState<[number, number][] | null>(null);
-  const [sidebarTab, setSidebarTab] = useState<"bom" | "list">("bom");
+  const [sidebarTab, setSidebarTab] = useState<"bom" | "list" | "chat">("bom");
   const [highlightIds, setHighlightIds] = useState<number[] | null>(null);
   const [thresholds, setThresholds] = useState({
     escalation: 0.65,
@@ -401,7 +402,7 @@ export default function WorkspaceView({
         </div>
         <aside className="flex w-80 flex-col border-l border-zinc-800">
           <div className="flex border-b border-zinc-800 text-xs">
-            {(["bom", "list"] as const).map((tab) => (
+            {(["bom", "list", "chat"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => {
@@ -414,7 +415,7 @@ export default function WorkspaceView({
                     : "text-zinc-500 hover:text-zinc-300"
                 }`}
               >
-                {tab === "bom" ? "BOM" : "List"}
+                {tab === "bom" ? "BOM" : tab === "list" ? "List" : "Chat"}
               </button>
             ))}
           </div>
@@ -439,6 +440,12 @@ export default function WorkspaceView({
               }
               onRejectGroup={rejectGroup}
               onFinalize={finalize}
+            />
+          ) : sidebarTab === "chat" ? (
+            <ChatPanel
+              scope="document"
+              scopeId={docId}
+              hint="Context: this document only"
             />
           ) : (
             <>

@@ -320,3 +320,14 @@ export interface AggregateBom {
   rows: BomRow[];
   totals: BomTotals;
 }
+
+// --- scoped Q&A chat -------------------------------------------------------
+
+export type ChatScope = "document" | "project" | "summary";
+
+export interface ChatMessageOut {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}

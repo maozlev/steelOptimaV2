@@ -1,6 +1,8 @@
 import base64
 import hashlib
+import json
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import httpx
@@ -80,8 +82,6 @@ class OllamaVlmClient:
         `validate` (dict -> None, raising on bad data) runs inside the retry loop so
         a reply that parses but fails validation is retried like a parse failure.
         """
-        import json
-
         prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
         payload = {
             "model": self.model,
@@ -129,6 +129,55 @@ class OllamaVlmClient:
             prompt_hash=prompt_hash,
             error=error,
         )
+
+    def text_available(self, model: str | None = None) -> bool:
+        """Is the model installed at all? Text chat needs no vision capability."""
+        model = model or self.model
+        try:
+            r = httpx.get(f"{self.base_url}/api/tags", timeout=2.0)
+            models = r.json().get("models", [])
+        except Exception:
+            return False
+        return any(m["name"] == model for m in models)
+
+    def chat_stream(
+        self,
+        messages: list[dict],
+        model: str | None = None,
+        num_ctx: int = 8192,
+        timeout_s: float | None = None,
+    ) -> Iterator[str]:
+        """Text-only chat, yielding content deltas as the model produces them.
+
+        The Q&A chat rides on this. Streaming is not a nicety here: qwen3.5:9b
+        takes seconds to minutes per answer on this hardware, and a spinner that
+        long reads as a hang.
+        """
+        payload = {
+            "model": model or self.model,
+            "think": False,
+            "messages": messages,
+            "stream": True,
+            "options": {"temperature": 0, "num_ctx": num_ctx},
+        }
+        with httpx.stream(
+            "POST",
+            f"{self.base_url}/api/chat",
+            json=payload,
+            timeout=timeout_s or self.timeout_s,
+        ) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                if chunk.get("error"):
+                    raise RuntimeError(chunk["error"])
+                delta = chunk.get("message", {}).get("content", "")
+                if delta:
+                    yield delta
+                if chunk.get("done"):
+                    return
 
     def classify_crop(self, crop_png: bytes, prompt: str | None = None) -> VlmResult:
         prompt = prompt or CLASSIFY_CROP_PROMPT

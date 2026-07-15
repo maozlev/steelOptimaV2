@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import (
     bom,
+    chat,
     cutouts,
     documents,
     export,
@@ -60,6 +61,7 @@ app.include_router(health.router)
 app.include_router(jobs.router)
 app.include_router(cutouts.router)
 app.include_router(bom.router)
+app.include_router(chat.router)
 app.include_router(projects.router)
 app.include_router(tables.router)
 app.include_router(pricing.router)

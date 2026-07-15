@@ -42,6 +42,24 @@ class Settings(BaseSettings):
     # dropping 200 PDFs into a project should just start scanning them
     table_autorun_on_upload: bool = True
 
+    # scoped Q&A chat (document / project / cross-project summary)
+    chat_enabled: bool = True
+    # defaults to the VLM model because it is the one guaranteed installed; a small
+    # text-only model (e.g. qwen3:4b) answers much faster — set STEELOPTIMA_CHAT_MODEL
+    chat_model: str = ""
+    # the context JSON must fit alongside the history: 16k tokens ~ 48k chars, so a
+    # 24k-char context cap leaves room for history + answer without pushing the KV
+    # cache (and with it the weights) out of VRAM — see the num_ctx note in vlm/client
+    chat_num_ctx: int = 16384
+    chat_context_max_chars: int = 24_000
+    # conversation turns replayed to the model per question
+    chat_history_messages: int = 12
+    chat_timeout_s: float = 300.0
+
+    @property
+    def effective_chat_model(self) -> str:
+        return self.chat_model or self.vlm_model
+
     @property
     def db_path(self) -> Path:
         return self.data_dir / "steel_optima.db"

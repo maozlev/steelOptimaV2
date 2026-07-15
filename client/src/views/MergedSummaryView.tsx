@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { ProjectListOut, ProjectSummary } from "../api/types";
+import ChatPanel from "../components/ChatPanel";
 import MaterialSummaryTable, {
   exportSummaryCsv,
 } from "../components/MaterialSummaryTable";
@@ -10,6 +11,7 @@ export default function MergedSummaryView({ onBack }: { onBack: () => void }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showChat, setShowChat] = useState(false);
 
   useEffect(() => {
     api
@@ -53,6 +55,16 @@ export default function MergedSummaryView({ onBack }: { onBack: () => void }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowChat((v) => !v)}
+            className={`rounded px-3 py-1.5 text-sm ${
+              showChat
+                ? "bg-emerald-800 hover:bg-emerald-700"
+                : "bg-zinc-800 hover:bg-zinc-700"
+            }`}
+          >
+            💬 Chat
+          </button>
           <button
             onClick={() =>
               summary && exportSummaryCsv(summary, "merged-materials.csv")
@@ -98,13 +110,24 @@ export default function MergedSummaryView({ onBack }: { onBack: () => void }) {
         ))}
       </div>
 
-      <div className="flex-1 overflow-auto">
-        {summary ? (
-          <MaterialSummaryTable summary={summary} showProjects />
-        ) : (
-          <p className="mt-6 text-center text-sm text-zinc-500">
-            Select at least one project.
-          </p>
+      <div className="flex min-h-0 flex-1 gap-4">
+        <div className="flex-1 overflow-auto">
+          {summary ? (
+            <MaterialSummaryTable summary={summary} showProjects />
+          ) : (
+            <p className="mt-6 text-center text-sm text-zinc-500">
+              Select at least one project.
+            </p>
+          )}
+        </div>
+        {showChat && (
+          <aside className="flex w-96 shrink-0 flex-col rounded border border-zinc-800 bg-zinc-950">
+            <ChatPanel
+              scope="summary"
+              scopeId={0}
+              hint="Context: ALL projects + order plans (ignores the selection above)"
+            />
+          </aside>
         )}
       </div>
     </div>
