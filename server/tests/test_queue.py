@@ -77,6 +77,28 @@ def test_queue_lifecycle(client, project, frozen_worker):
     assert len(q["queued"]) == 2 and not q["failed"]
 
 
+def test_scan_all_skips_already_scanned(client, project, frozen_worker):
+    """A project-wide scan must not re-burn documents that already scanned
+    clean — only force=true redoes them."""
+    import app.db.session as db_session
+    from app.db.models import ExtractionJob
+
+    # clear the queue from the previous test and pretend both scanned clean
+    with db_session.SessionLocal() as db:
+        pids = [d for (d,) in db.query(ExtractionJob.id)]
+        db.query(ExtractionJob).filter(ExtractionJob.id.in_(pids)).update(
+            {"status": "done"}, synchronize_session=False
+        )
+        db.commit()
+
+    # default scan-all: nothing to do, everything already done
+    assert client.post(f"/api/projects/{project}/table-jobs").json() == []
+    # force: re-scans every document. These two stay queued (worker frozen) and
+    # become the fixture the restart-recovery test below relies on.
+    forced = client.post(f"/api/projects/{project}/table-jobs?force=true").json()
+    assert len(forced) == 2
+
+
 def test_restart_recovery_requeues_queued(client, project, frozen_worker):
     """Queued jobs survive a restart; a job caught running fails honestly."""
     import app.db.session as db_session

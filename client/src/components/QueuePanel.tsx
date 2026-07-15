@@ -8,16 +8,17 @@ function humanEta(seconds: number): string {
   return `~${(seconds / 3600).toFixed(1)} h left`;
 }
 
-/** Live scan-queue for one project: progress bar, what's scanning now, what's
- *  waiting (cancellable), what failed (retryable). Polls only while active. */
+/** Live scan-queue for one project. It ONLY exists while there is real work in
+ *  flight (uploading / running / queued) or a failure to retry — a project of
+ *  already-scanned documents shows nothing here; the per-document badges carry
+ *  the "done" state. Documents that were never asked to scan are NOT a queue. */
 export default function QueuePanel({
   projectId,
   uploading,
   onChanged,
 }: {
   projectId: number;
-  /** files still being uploaded by the dropzone pump — part of the pipeline
-   *  the user cares about, so the panel counts them as "on their way" */
+  /** files still being uploaded by the dropzone pump — on their way into the queue */
   uploading: { done: number; total: number } | null;
   onChanged: () => void;
 }) {
@@ -35,12 +36,14 @@ export default function QueuePanel({
     refresh();
   }, [refresh, uploading?.done]);
 
+  const uploadsInFlight = uploading ? uploading.total - uploading.done : 0;
+  // "active" is genuine in-flight work — NOT documents that merely lack a scan
   const active =
-    !!uploading ||
+    uploadsInFlight > 0 ||
     !!queue?.running.length ||
     !!queue?.queued.length;
 
-  // poll while active; one extra refresh when activity ends so counts settle
+  // poll while active; one settling refresh when work ends
   useEffect(() => {
     if (!active) {
       if (lastActive.current) {
@@ -57,25 +60,12 @@ export default function QueuePanel({
 
   if (!queue) return null;
 
-  const uploadsInFlight = uploading ? uploading.total - uploading.done : 0;
-  const total = queue.total_documents + uploadsInFlight;
-  const doneCount = queue.scanned;
-  const failedCount = queue.failed.length;
-  const waitingCount =
-    queue.queued.length + queue.unscanned.length + uploadsInFlight;
-  const runningNow = queue.running[0];
+  const failed = queue.failed;
 
-  // idle and nothing worth saying
-  if (!active && failedCount === 0 && total === 0) return null;
-  if (!active && failedCount === 0 && doneCount === total) {
-    return (
-      <div className="flex items-center gap-2 rounded border border-emerald-900/60 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-300">
-        ✓ All {total} document{total === 1 ? "" : "s"} scanned
-      </div>
-    );
-  }
-
-  const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+  // Idle and nothing failed → no panel at all. This is the "don't look like a
+  // queue when there is no queue" rule: a project full of scanned (or never-
+  // scanned) documents shows nothing here.
+  if (!active && failed.length === 0) return null;
 
   async function cancelOne(jobId: number) {
     setBusy(true);
@@ -111,19 +101,57 @@ export default function QueuePanel({
     }
   }
 
+  // Failures only, nothing running → compact actionable strip, no progress bar,
+  // no "scanning" language.
+  if (!active) {
+    return (
+      <div className="rounded border border-red-900/60 bg-red-950/30 px-4 py-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-red-300">
+            {failed.length} scan{failed.length === 1 ? "" : "s"} failed
+          </span>
+          <button
+            onClick={retryFailed}
+            disabled={busy}
+            className="rounded bg-zinc-800 px-2.5 py-1 text-xs hover:bg-zinc-700 disabled:opacity-40"
+          >
+            ↻ retry failed
+          </button>
+        </div>
+        <ul className="mt-1.5 text-xs text-red-300/80">
+          {failed.map((e) => (
+            <li key={e.job_id} className="truncate">
+              {e.filename}
+              {e.error && <span className="text-red-400/60"> — {e.error}</span>}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  // Active scan. Denominator is the batch actually going through the pipeline —
+  // scanned + failed + running + queued + uploads — never the whole project, so
+  // never-scanned hole drawings don't drag the bar to 0%.
+  const runningNow = queue.running[0];
+  const inPipeline =
+    queue.scanned +
+    failed.length +
+    queue.running.length +
+    queue.queued.length +
+    uploadsInFlight;
+  const doneCount = queue.scanned;
+  const waitingCount = queue.queued.length + uploadsInFlight;
+  const pct = inPipeline > 0 ? Math.round((doneCount / inPipeline) * 100) : 0;
+
   return (
     <div className="rounded border border-zinc-700 bg-zinc-900/70 px-4 py-3">
-      {/* headline + progress */}
       <div className="mb-1.5 flex items-baseline justify-between">
-        <span className="text-sm font-medium">
-          {active ? "Scanning project…" : "Scan finished"}
-        </span>
+        <span className="text-sm font-medium">Scanning…</span>
         <span className="text-sm tabular-nums text-zinc-300">
-          {doneCount} / {total} scanned
-          {queue.eta_seconds != null && active && (
-            <span className="ml-2 text-zinc-500">
-              {humanEta(queue.eta_seconds)}
-            </span>
+          {doneCount} / {inPipeline} scanned
+          {queue.eta_seconds != null && (
+            <span className="ml-2 text-zinc-500">{humanEta(queue.eta_seconds)}</span>
           )}
         </span>
       </div>
@@ -134,11 +162,10 @@ export default function QueuePanel({
         />
       </div>
 
-      {/* live line: what is happening right now */}
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-400">
-        {uploading && (
+        {uploadsInFlight > 0 && (
           <span className="text-sky-300">
-            ⇧ uploading {uploading.done + 1}/{uploading.total}
+            ⇧ uploading {uploading!.done + 1}/{uploading!.total}
           </span>
         )}
         {runningNow && (
@@ -155,8 +182,8 @@ export default function QueuePanel({
             ⏳ {waitingCount} waiting {showWaiting ? "▴" : "▾"}
           </button>
         )}
-        {failedCount > 0 && (
-          <span className="text-red-400">⚠ {failedCount} failed</span>
+        {failed.length > 0 && (
+          <span className="text-red-400">⚠ {failed.length} failed</span>
         )}
         <span className="ml-auto flex gap-2">
           {queue.queued.length > 0 && (
@@ -168,7 +195,7 @@ export default function QueuePanel({
               ✕ cancel queued
             </button>
           )}
-          {failedCount > 0 && (
+          {failed.length > 0 && (
             <button
               onClick={retryFailed}
               disabled={busy}
@@ -180,7 +207,6 @@ export default function QueuePanel({
         </span>
       </div>
 
-      {/* expandable waiting list with per-item cancel */}
       {showWaiting && queue.queued.length > 0 && (
         <ul className="mt-2 divide-y divide-zinc-800/60 rounded border border-zinc-800 bg-zinc-950/40 text-xs">
           {queue.queued.map((e) => (
@@ -197,18 +223,6 @@ export default function QueuePanel({
               >
                 ✕
               </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {/* failed list with reasons */}
-      {failedCount > 0 && (
-        <ul className="mt-2 text-xs text-red-300/80">
-          {queue.failed.map((e) => (
-            <li key={e.job_id} className="truncate">
-              ⚠ {e.filename}
-              {e.error && <span className="text-red-400/60"> — {e.error}</span>}
             </li>
           ))}
         </ul>

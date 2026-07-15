@@ -221,13 +221,18 @@ async def upload_project_document(
     "/projects/{project_id}/table-jobs", response_model=list[JobOut], status_code=202
 )
 def create_project_table_jobs(
-    project_id: int, only_failed: bool = False, db: Session = Depends(get_db)
+    project_id: int,
+    only_failed: bool = False,
+    force: bool = False,
+    db: Session = Depends(get_db),
 ):
-    """(Re)scan documents that aren't already queued/running.
+    """Scan project documents that still need it.
 
-    only_failed=true rescans just the documents whose LAST scan failed — the
-    queue panel's "retry failed" button, which must not burn time re-reading
-    documents that already scanned clean."""
+    By default this NEVER re-scans a document that already scanned clean — it
+    only picks up the never-scanned and the failed. `only_failed=true` narrows
+    that to just the failures (the queue panel's retry button). `force=true`
+    re-scans every document regardless, for the rare "the pipeline changed,
+    redo everything" case. A queued/running document is always skipped."""
     project = _get_project(db, project_id)
     jobs = []
     for doc in project.documents:
@@ -242,6 +247,9 @@ def create_project_table_jobs(
         if last and last.status in ("queued", "running"):
             continue
         if only_failed and (last is None or last.status != "failed"):
+            continue
+        # already scanned clean → leave it alone unless explicitly forced
+        if not force and not only_failed and last and last.status == "done":
             continue
         job = create_table_job(db, doc)
         worker.enqueue(job.id)
