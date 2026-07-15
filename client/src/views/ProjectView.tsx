@@ -51,8 +51,20 @@ export default function ProjectView({
   const [uploading, setUploading] = useState<{ done: number; total: number } | null>(
     null,
   );
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const queue = useRef<File[]>([]);
   const pumping = useRef(false);
+
+  async function deleteDoc(docId: number) {
+    setConfirmDelete(null);
+    setError(null);
+    try {
+      await api.deleteDocument(docId);
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   const refresh = useCallback(
     () => api.getProject(projectId).then(setProject).catch((e) => setError(e.message)),
@@ -260,6 +272,31 @@ export default function ProjectView({
                       >
                         📐
                       </button>
+                      {confirmDelete === d.id ? (
+                        <span className="flex items-center gap-1">
+                          <span className="text-xs text-zinc-400">Delete?</span>
+                          <button
+                            onClick={() => deleteDoc(d.id)}
+                            className="rounded bg-red-800 px-2 py-1 text-xs font-medium hover:bg-red-700"
+                          >
+                            Yes
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(null)}
+                            className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700"
+                          >
+                            No
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDelete(d.id)}
+                          className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
+                          title="Delete this document from the project"
+                        >
+                          ✕
+                        </button>
+                      )}
                     </div>
                   </li>
                 ))}
