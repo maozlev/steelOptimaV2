@@ -66,6 +66,11 @@ export const api = {
   },
   deleteDocument: (docId: number) =>
     request<void>(`/api/documents/${docId}`, { method: "DELETE" }),
+  moveDocument: (docId: number, projectId: number) =>
+    request<DocumentOut>(
+      `/api/documents/${docId}`,
+      json("PATCH", { project_id: projectId }),
+    ),
   cropDocument: (docId: number, crop: CropIn) =>
     request<DocumentDetailOut>(`/api/documents/${docId}/crop`, json("POST", crop)),
   finalizeDocument: (docId: number, sessionId?: string) =>

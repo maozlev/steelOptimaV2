@@ -3,6 +3,7 @@ export interface DocumentOut {
   filename: string;
   page_count: number;
   status: "pending" | "approved";
+  project_id: number | null;
   created_at: string;
 }
 

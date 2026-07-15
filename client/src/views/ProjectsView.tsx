@@ -1,26 +1,44 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { ProjectListOut } from "../api/types";
+import type { DocumentOut, ProjectListOut } from "../api/types";
 
 export default function ProjectsView({
   onOpen,
   onMergedSummary,
-  onBack,
+  onCutoutBom,
 }: {
   onOpen: (projectId: number) => void;
   onMergedSummary: () => void;
-  onBack: () => void;
+  onCutoutBom: () => void;
 }) {
   const [projects, setProjects] = useState<ProjectListOut[]>([]);
+  // documents from before the project hierarchy — they need adopting
+  const [orphans, setOrphans] = useState<DocumentOut[]>([]);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
-  const refresh = () => api.listProjects().then(setProjects).catch(() => {});
+  const refresh = () => {
+    api.listProjects().then(setProjects).catch(() => {});
+    api
+      .listDocuments()
+      .then((docs) => setOrphans(docs.filter((d) => d.project_id == null)))
+      .catch(() => {});
+  };
 
   useEffect(() => {
     refresh();
   }, []);
+
+  async function adopt(docId: number, projectId: number) {
+    setError(null);
+    try {
+      await api.moveDocument(docId, projectId);
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   async function create() {
     const trimmed = name.trim();
@@ -63,10 +81,11 @@ export default function ProjectsView({
             📋 Merged summary
           </button>
           <button
-            onClick={onBack}
+            onClick={onCutoutBom}
             className="rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700"
+            title="Combined cutout BOM across every approved drawing"
           >
-            ← Documents
+            🔩 Cutout BOM
           </button>
         </div>
       </header>
@@ -152,6 +171,52 @@ export default function ProjectsView({
               </li>
             ))}
           </ul>
+        )}
+
+        {orphans.length > 0 && (
+          <div className="mt-6">
+            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-amber-400">
+              Unassigned documents
+            </div>
+            <p className="mb-2 text-xs text-zinc-500">
+              Every document belongs to a project now. Move these into one to
+              keep working with them.
+            </p>
+            <ul className="divide-y divide-zinc-800 rounded border border-amber-900/50">
+              {orphans.map((d) => (
+                <li
+                  key={d.id}
+                  className="flex items-center justify-between gap-3 px-4 py-2.5"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{d.filename}</div>
+                    <div className="text-xs text-zinc-500">
+                      {d.page_count} page{d.page_count === 1 ? "" : "s"} ·{" "}
+                      {new Date(d.created_at).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      const pid = Number(e.target.value);
+                      if (pid) void adopt(d.id, pid);
+                    }}
+                    disabled={projects.length === 0}
+                    className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs"
+                  >
+                    <option value="" disabled>
+                      {projects.length ? "Move to project…" : "Create a project first"}
+                    </option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
     </div>

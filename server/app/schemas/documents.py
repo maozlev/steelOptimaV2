@@ -22,6 +22,7 @@ class DocumentOut(BaseModel):
     sha256: str
     page_count: int
     status: str
+    project_id: int | None
     created_at: datetime
 
 

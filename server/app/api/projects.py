@@ -127,6 +127,7 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
                     "sha256": d.sha256,
                     "page_count": d.page_count,
                     "status": d.status,
+                    "project_id": d.project_id,
                     "created_at": d.created_at,
                 },
                 **stats[d.id],

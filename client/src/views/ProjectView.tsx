@@ -34,10 +34,14 @@ export default function ProjectView({
   projectId,
   onBack,
   onOpenTable,
+  onOpenDocTables,
+  onOpenDrawing,
 }: {
   projectId: number;
   onBack: () => void;
   onOpenTable: (tableId: number) => void;
+  onOpenDocTables: (docId: number) => void;
+  onOpenDrawing: (docId: number) => void;
 }) {
   const [project, setProject] = useState<ProjectDetailOut | null>(null);
   const [tab, setTab] = useState<Tab>("documents");
@@ -194,13 +198,25 @@ export default function ProjectView({
                     key={d.id}
                     className="flex items-center justify-between px-4 py-3"
                   >
-                    <div>
+                    <button
+                      onClick={() =>
+                        d.table_count > 0
+                          ? onOpenDocTables(d.id)
+                          : onOpenDrawing(d.id)
+                      }
+                      className="-mx-2 flex-1 rounded px-2 py-1 text-left hover:bg-zinc-900"
+                      title={
+                        d.table_count > 0
+                          ? "Open this document's material tables"
+                          : "Open the drawing: scanned page and holes"
+                      }
+                    >
                       <div className="font-medium">{d.filename}</div>
                       <div className="text-xs text-zinc-500">
                         {d.page_count} page{d.page_count === 1 ? "" : "s"} ·{" "}
                         {new Date(d.created_at).toLocaleString()}
                       </div>
-                    </div>
+                    </button>
                     <div className="flex items-center gap-2">
                       {d.needs_review_rows > 0 && (
                         <span className="rounded bg-amber-900/60 px-2 py-0.5 text-xs font-medium text-amber-300">
@@ -236,6 +252,13 @@ export default function ProjectView({
                         title="(Re)scan for material tables"
                       >
                         ↻ scan
+                      </button>
+                      <button
+                        onClick={() => onOpenDrawing(d.id)}
+                        className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700"
+                        title="Open the drawing: scanned page, holes and BOM"
+                      >
+                        📐
                       </button>
                     </div>
                   </li>

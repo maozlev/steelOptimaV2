@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -12,6 +13,7 @@ from app.db.models import (
     MaterialRow,
     MaterialTable,
     Page,
+    Project,
     TelemetryEvent,
     VlmCall,
 )
@@ -187,6 +189,29 @@ def get_document(doc_id: int, db: Session = Depends(get_db)):
     doc = db.get(Document, doc_id)
     if not doc:
         raise HTTPException(404, "Document not found")
+    return doc
+
+
+class DocumentMoveIn(BaseModel):
+    project_id: int
+
+
+@router.patch("/documents/{doc_id}", response_model=DocumentOut)
+def move_document(doc_id: int, body: DocumentMoveIn, db: Session = Depends(get_db)):
+    """Assign a document to a project (or move it between projects).
+
+    Every document belongs to a project in the UI hierarchy; this is how the
+    pre-hierarchy orphans get adopted. Detaching (project_id null) is
+    deliberately not offered — a document without a project has no home screen.
+    """
+    doc = db.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    if db.get(Project, body.project_id) is None:
+        raise HTTPException(404, "Project not found")
+    doc.project_id = body.project_id
+    db.commit()
+    db.refresh(doc)
     return doc
 
 
