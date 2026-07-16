@@ -39,6 +39,12 @@ class Project(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # what this project's scans look for — the USER decides at creation:
+    # "tables" (material tables → summary/bid/orders) or "cutouts" (holes &
+    # shapes). A table scanner pointed at a shape drawing hallucinates a BOM
+    # out of the title block; the project kind is what prevents that.
+    # add_missing_columns backfills "" on old rows — read it as "tables".
+    kind: Mapped[str] = mapped_column(String(16), default="tables")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     documents: Mapped[list["Document"]] = relationship(

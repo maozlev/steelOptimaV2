@@ -157,10 +157,14 @@ export interface DocumentBom {
   totals: BomTotals;
 }
 
+/** What this project's scans look for — the user decides at creation. */
+export type ProjectKind = "tables" | "cutouts";
+
 export interface ProjectOut {
   id: number;
   name: string;
   note: string | null;
+  kind: ProjectKind;
   created_at: string;
 }
 
@@ -173,6 +177,9 @@ export interface ProjectListOut extends ProjectOut {
 export interface ProjectDocumentOut extends DocumentOut {
   table_count: number;
   needs_review_rows: number;
+  cutout_count: number;
+  pending_cutouts: number;
+  /** latest scan job of the PROJECT's kind (tables or cutouts) */
   last_table_job_status: "queued" | "running" | "done" | "failed" | null;
 }
 

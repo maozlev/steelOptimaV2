@@ -116,11 +116,13 @@ export const api = {
     ),
 
   listProjects: () => request<ProjectListOut[]>("/api/projects"),
-  createProject: (name: string, note?: string) =>
-    request<ProjectOut>("/api/projects", json("POST", { name, note })),
+  createProject: (name: string, kind: "tables" | "cutouts" = "tables", note?: string) =>
+    request<ProjectOut>("/api/projects", json("POST", { name, note, kind })),
   getProject: (id: number) => request<ProjectDetailOut>(`/api/projects/${id}`),
-  patchProject: (id: number, body: { name?: string; note?: string }) =>
-    request<ProjectOut>(`/api/projects/${id}`, json("PATCH", body)),
+  patchProject: (
+    id: number,
+    body: { name?: string; note?: string; kind?: "tables" | "cutouts" },
+  ) => request<ProjectOut>(`/api/projects/${id}`, json("PATCH", body)),
   deleteProject: (id: number) =>
     request<void>(`/api/projects/${id}`, { method: "DELETE" }),
   uploadProjectDocument(projectId: number, file: File) {

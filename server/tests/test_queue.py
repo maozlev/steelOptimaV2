@@ -99,6 +99,43 @@ def test_scan_all_skips_already_scanned(client, project, frozen_worker):
     assert len(forced) == 2
 
 
+def test_cutouts_project_scans_for_cutouts(client, frozen_worker):
+    """The project's kind decides the pipeline: a holes & shapes project must
+    create CUTOUT jobs, and its queue must ignore table jobs entirely."""
+    r = client.post(
+        "/api/projects", json={"name": "Shapes", "kind": "cutouts"}
+    )
+    assert r.status_code == 201 and r.json()["kind"] == "cutouts"
+    pid = r.json()["id"]
+
+    pdf = TABLES_DIR / "833.1-04-20.pdf"
+    with open(pdf, "rb") as f:
+        doc = client.post(
+            f"/api/projects/{pid}/documents",
+            files={"file": (pdf.name, f, "application/pdf")},
+        ).json()
+
+    jobs = client.post(f"/api/projects/{pid}/table-jobs").json()
+    assert len(jobs) == 1
+
+    import app.db.session as db_session
+    from app.db.models import ExtractionJob
+
+    with db_session.SessionLocal() as db:
+        job = db.get(ExtractionJob, jobs[0]["id"])
+        assert job.kind != "tables"  # a cutout job, not a table scan
+
+    q = client.get(f"/api/projects/{pid}/queue").json()
+    assert len(q["queued"]) == 1
+    assert q["queued"][0]["document_id"] == doc["id"]
+
+    # invalid kind is rejected
+    assert (
+        client.post("/api/projects", json={"name": "x", "kind": "bogus"}).status_code
+        == 422
+    )
+
+
 def test_restart_recovery_requeues_queued(client, project, frozen_worker):
     """Queued jobs survive a restart; a job caught running fails honestly."""
     import app.db.session as db_session

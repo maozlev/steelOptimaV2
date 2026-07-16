@@ -155,12 +155,17 @@ export default function ProjectView({
     </button>
   );
 
+  const isCutouts = project.kind === "cutouts";
+
   return (
     <div className="mx-auto flex h-full max-w-5xl flex-col gap-4 p-8">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {isCutouts ? "📐" : "🧾"} {project.name}
+          </h1>
           <p className="text-sm text-zinc-400">
+            {isCutouts ? "Holes & shapes" : "Material tables"} ·{" "}
             {project.documents.length} document
             {project.documents.length === 1 ? "" : "s"}
             {project.note ? ` · ${project.note}` : ""}
@@ -174,13 +179,14 @@ export default function ProjectView({
         </button>
       </header>
 
+      {/* a cutouts project has no material tables — its tabs would be empty */}
       <nav className="flex gap-2">
         {tabButton("documents", "📄 Documents")}
-        {tabButton("tables", "🧾 Tables")}
-        {tabButton("summary", "📋 Summary")}
-        {tabButton("bid", "💰 Bid")}
-        {tabButton("orders", "✂ Orders")}
-        {tabButton("chat", "💬 Chat")}
+        {!isCutouts && tabButton("tables", "🧾 Tables")}
+        {!isCutouts && tabButton("summary", "📋 Summary")}
+        {!isCutouts && tabButton("bid", "💰 Bid")}
+        {!isCutouts && tabButton("orders", "✂ Orders")}
+        {!isCutouts && tabButton("chat", "💬 Chat")}
       </nav>
 
       {error && (
@@ -200,8 +206,9 @@ export default function ProjectView({
             />
             {project.documents.length === 0 ? (
               <p className="mt-6 text-center text-sm text-zinc-500">
-                No documents yet — drop this tender's PDFs above. Table scanning
-                starts automatically.
+                No documents yet — drop this tender's PDFs above.{" "}
+                {isCutouts ? "Hole & shape" : "Table"} scanning starts
+                automatically.
               </p>
             ) : (
               <ul className="divide-y divide-zinc-800 rounded border border-zinc-800">
@@ -212,13 +219,13 @@ export default function ProjectView({
                   >
                     <button
                       onClick={() =>
-                        d.table_count > 0
+                        !isCutouts && d.table_count > 0
                           ? onOpenDocTables(d.id)
                           : onOpenDrawing(d.id)
                       }
                       className="-mx-2 flex-1 rounded px-2 py-1 text-left hover:bg-zinc-900"
                       title={
-                        d.table_count > 0
+                        !isCutouts && d.table_count > 0
                           ? "Open this document's material tables"
                           : "Open the drawing: scanned page and holes"
                       }
@@ -230,15 +237,32 @@ export default function ProjectView({
                       </div>
                     </button>
                     <div className="flex items-center gap-2">
-                      {d.needs_review_rows > 0 && (
-                        <span className="rounded bg-amber-900/60 px-2 py-0.5 text-xs font-medium text-amber-300">
-                          {d.needs_review_rows} to review
-                        </span>
-                      )}
-                      {d.table_count > 0 && (
-                        <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
-                          {d.table_count} table{d.table_count === 1 ? "" : "s"}
-                        </span>
+                      {isCutouts ? (
+                        <>
+                          {d.pending_cutouts > 0 && (
+                            <span className="rounded bg-amber-900/60 px-2 py-0.5 text-xs font-medium text-amber-300">
+                              {d.pending_cutouts} to review
+                            </span>
+                          )}
+                          {d.cutout_count > 0 && (
+                            <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
+                              {d.cutout_count} cutout{d.cutout_count === 1 ? "" : "s"}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {d.needs_review_rows > 0 && (
+                            <span className="rounded bg-amber-900/60 px-2 py-0.5 text-xs font-medium text-amber-300">
+                              {d.needs_review_rows} to review
+                            </span>
+                          )}
+                          {d.table_count > 0 && (
+                            <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
+                              {d.table_count} table{d.table_count === 1 ? "" : "s"}
+                            </span>
+                          )}
+                        </>
                       )}
                       {d.last_table_job_status && (
                         <span
@@ -255,13 +279,19 @@ export default function ProjectView({
                       )}
                       <button
                         onClick={() =>
-                          api
-                            .startTableJob(d.id)
+                          (isCutouts
+                            ? api.startJob(d.id, true)
+                            : api.startTableJob(d.id)
+                          )
                             .then(refresh)
                             .catch((e) => setError(e.message))
                         }
                         className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700"
-                        title="(Re)scan for material tables"
+                        title={
+                          isCutouts
+                            ? "(Re)scan for holes & shapes"
+                            : "(Re)scan for material tables"
+                        }
                       >
                         ↻ scan
                       </button>

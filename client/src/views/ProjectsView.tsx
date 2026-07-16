@@ -1,6 +1,19 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { DocumentOut, ProjectListOut } from "../api/types";
+import type { DocumentOut, ProjectKind, ProjectListOut } from "../api/types";
+
+const KIND_META: Record<ProjectKind, { icon: string; label: string; hint: string }> = {
+  tables: {
+    icon: "🧾",
+    label: "Material tables",
+    hint: "Find BOM tables → summary, bid, orders",
+  },
+  cutouts: {
+    icon: "📐",
+    label: "Holes & shapes",
+    hint: "Find cutouts on drawings → cutout BOM",
+  },
+};
 
 export default function ProjectsView({
   onOpen,
@@ -15,6 +28,7 @@ export default function ProjectsView({
   // documents from before the project hierarchy — they need adopting
   const [orphans, setOrphans] = useState<DocumentOut[]>([]);
   const [name, setName] = useState("");
+  const [kind, setKind] = useState<ProjectKind>("tables");
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
@@ -45,7 +59,7 @@ export default function ProjectsView({
     if (!trimmed) return;
     setError(null);
     try {
-      const p = await api.createProject(trimmed);
+      const p = await api.createProject(trimmed, kind);
       setName("");
       onOpen(p.id);
     } catch (e) {
@@ -90,21 +104,45 @@ export default function ProjectsView({
         </div>
       </header>
 
-      <div className="flex gap-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && create()}
-          placeholder="New project name…"
-          className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-emerald-600"
-        />
-        <button
-          onClick={create}
-          disabled={!name.trim()}
-          className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium hover:bg-emerald-600 disabled:opacity-40"
-        >
-          Create
-        </button>
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-2">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && create()}
+            placeholder="New project name…"
+            className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-emerald-600"
+          />
+          <button
+            onClick={create}
+            disabled={!name.trim()}
+            className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium hover:bg-emerald-600 disabled:opacity-40"
+          >
+            Create
+          </button>
+        </div>
+        {/* the user decides what this project scans for — a table scanner
+            pointed at shape drawings invents tables out of title blocks */}
+        <div className="flex gap-2">
+          {(Object.keys(KIND_META) as ProjectKind[]).map((k) => (
+            <button
+              key={k}
+              onClick={() => setKind(k)}
+              className={`flex-1 rounded border px-3 py-2 text-left text-sm transition-colors ${
+                kind === k
+                  ? "border-emerald-600 bg-emerald-950/40"
+                  : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-500"
+              }`}
+            >
+              <span className="font-medium">
+                {KIND_META[k].icon} {KIND_META[k].label}
+              </span>
+              <span className="mt-0.5 block text-xs text-zinc-500">
+                {KIND_META[k].hint}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {error && (
@@ -127,11 +165,18 @@ export default function ProjectsView({
                   className="flex flex-1 items-center justify-between px-4 py-3 text-left hover:bg-zinc-900"
                 >
                   <div>
-                    <div className="font-medium">{p.name}</div>
+                    <div className="font-medium">
+                      {KIND_META[p.kind]?.icon ?? "🧾"} {p.name}
+                    </div>
                     <div className="text-xs text-zinc-500">
-                      {p.document_count} document{p.document_count === 1 ? "" : "s"} ·{" "}
-                      {p.table_count} table{p.table_count === 1 ? "" : "s"} ·{" "}
-                      {new Date(p.created_at).toLocaleDateString()}
+                      {KIND_META[p.kind]?.label ?? "Material tables"} ·{" "}
+                      {p.document_count} document{p.document_count === 1 ? "" : "s"}
+                      {p.kind !== "cutouts" && (
+                        <>
+                          {" "}· {p.table_count} table{p.table_count === 1 ? "" : "s"}
+                        </>
+                      )}{" "}
+                      · {new Date(p.created_at).toLocaleDateString()}
                     </div>
                   </div>
                   <div className="flex items-center gap-3">

@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    Cutout,
     Document,
     ExtractionJob,
     MaterialPrice,
@@ -43,36 +44,85 @@ def _get_project(db: Session, project_id: int) -> Project:
     return project
 
 
-def _doc_table_stats(db: Session, doc_ids: list[int]) -> dict[int, dict]:
-    """Per-document table count, needs_review row count and last table-job status."""
+def _project_kind(project: Project) -> str:
+    """Legacy rows carry '' from add_missing_columns — they are tables projects."""
+    return project.kind if project.kind == "cutouts" else "tables"
+
+
+def _job_kind_filter(project_kind: str):
+    """Which ExtractionJob rows belong to this project's pipeline. Cutout jobs
+    predate the kind column, so anything not 'tables' counts as cutouts."""
+    if project_kind == "cutouts":
+        return ExtractionJob.kind != "tables"
+    return ExtractionJob.kind == "tables"
+
+
+def _doc_stats(db: Session, doc_ids: list[int], project_kind: str) -> dict[int, dict]:
+    """Per-document scan results and last scan-job status, for the project's kind."""
     stats: dict[int, dict] = {
-        d: {"table_count": 0, "needs_review_rows": 0, "last_table_job_status": None}
+        d: {
+            "table_count": 0,
+            "needs_review_rows": 0,
+            "cutout_count": 0,
+            "pending_cutouts": 0,
+            "last_table_job_status": None,
+        }
         for d in doc_ids
     }
     if not doc_ids:
         return stats
-    for doc_id, count in (
-        db.query(Page.document_id, func.count(MaterialTable.id))
-        .join(MaterialTable, MaterialTable.page_id == Page.id)
-        .filter(Page.document_id.in_(doc_ids))
-        .group_by(Page.document_id)
-    ):
-        stats[doc_id]["table_count"] = count
-    for doc_id, count in (
-        db.query(Page.document_id, func.count(MaterialRow.id))
-        .join(MaterialTable, MaterialTable.page_id == Page.id)
-        .join(MaterialRow, MaterialRow.table_id == MaterialTable.id)
-        .filter(Page.document_id.in_(doc_ids), MaterialRow.status == "needs_review")
-        .group_by(Page.document_id)
-    ):
-        stats[doc_id]["needs_review_rows"] = count
+    if project_kind == "cutouts":
+        for doc_id, count in (
+            db.query(Page.document_id, func.count(Cutout.id))
+            .join(Cutout, Cutout.page_id == Page.id)
+            .filter(Page.document_id.in_(doc_ids))
+            .group_by(Page.document_id)
+        ):
+            stats[doc_id]["cutout_count"] = count
+        for doc_id, count in (
+            db.query(Page.document_id, func.count(Cutout.id))
+            .join(Cutout, Cutout.page_id == Page.id)
+            .filter(Page.document_id.in_(doc_ids), Cutout.status == "pending")
+            .group_by(Page.document_id)
+        ):
+            stats[doc_id]["pending_cutouts"] = count
+    else:
+        for doc_id, count in (
+            db.query(Page.document_id, func.count(MaterialTable.id))
+            .join(MaterialTable, MaterialTable.page_id == Page.id)
+            .filter(Page.document_id.in_(doc_ids))
+            .group_by(Page.document_id)
+        ):
+            stats[doc_id]["table_count"] = count
+        for doc_id, count in (
+            db.query(Page.document_id, func.count(MaterialRow.id))
+            .join(MaterialTable, MaterialTable.page_id == Page.id)
+            .join(MaterialRow, MaterialRow.table_id == MaterialTable.id)
+            .filter(
+                Page.document_id.in_(doc_ids), MaterialRow.status == "needs_review"
+            )
+            .group_by(Page.document_id)
+        ):
+            stats[doc_id]["needs_review_rows"] = count
     for job in (
         db.query(ExtractionJob)
-        .filter(ExtractionJob.document_id.in_(doc_ids), ExtractionJob.kind == "tables")
+        .filter(
+            ExtractionJob.document_id.in_(doc_ids), _job_kind_filter(project_kind)
+        )
         .order_by(ExtractionJob.id)
     ):
         stats[job.document_id]["last_table_job_status"] = job.status
     return stats
+
+
+def _create_scan_job(db: Session, doc: Document, project_kind: str) -> ExtractionJob:
+    """The job type follows the project's declared purpose — a table scanner
+    pointed at a shape drawing invents a BOM out of the title block."""
+    if project_kind == "cutouts":
+        from app.extraction.service import create_job as create_cutout_job
+
+        return create_cutout_job(db, doc)
+    return create_table_job(db, doc)
 
 
 @router.post("/projects", response_model=ProjectOut, status_code=201)
@@ -80,7 +130,9 @@ def create_project(body: ProjectIn, db: Session = Depends(get_db)):
     name = body.name.strip()
     if not name:
         raise HTTPException(422, "Project name must not be empty")
-    project = Project(name=name, note=body.note)
+    if body.kind not in ("tables", "cutouts"):
+        raise HTTPException(422, "kind must be 'tables' or 'cutouts'")
+    project = Project(name=name, note=body.note, kind=body.kind)
     db.add(project)
     tracker.emit(db, "project_created", entity_id=None)
     db.commit()
@@ -94,16 +146,20 @@ def list_projects(db: Session = Depends(get_db)):
     out = []
     for p in projects:
         doc_ids = [d.id for d in p.documents]
-        stats = _doc_table_stats(db, doc_ids)
+        stats = _doc_stats(db, doc_ids, _project_kind(p))
         out.append(
             ProjectListOut(
                 id=p.id,
                 name=p.name,
                 note=p.note,
+                kind=_project_kind(p),
                 created_at=p.created_at,
                 document_count=len(doc_ids),
                 table_count=sum(s["table_count"] for s in stats.values()),
-                needs_review_rows=sum(s["needs_review_rows"] for s in stats.values()),
+                needs_review_rows=sum(
+                    s["needs_review_rows"] + s["pending_cutouts"]
+                    for s in stats.values()
+                ),
             )
         )
     return out
@@ -113,11 +169,12 @@ def list_projects(db: Session = Depends(get_db)):
 def get_project(project_id: int, db: Session = Depends(get_db)):
     project = _get_project(db, project_id)
     doc_ids = [d.id for d in project.documents]
-    stats = _doc_table_stats(db, doc_ids)
+    stats = _doc_stats(db, doc_ids, _project_kind(project))
     return ProjectDetailOut(
         id=project.id,
         name=project.name,
         note=project.note,
+        kind=_project_kind(project),
         created_at=project.created_at,
         documents=[
             ProjectDocumentOut(
@@ -147,6 +204,10 @@ def patch_project(project_id: int, body: ProjectPatchIn, db: Session = Depends(g
         project.name = name
     if body.note is not None:
         project.note = body.note
+    if body.kind is not None:
+        if body.kind not in ("tables", "cutouts"):
+            raise HTTPException(422, "kind must be 'tables' or 'cutouts'")
+        project.kind = body.kind
     db.commit()
     db.refresh(project)
     return project
@@ -212,7 +273,7 @@ async def upload_project_document(
     db.commit()
     db.refresh(doc)
     if settings.table_autorun_on_upload:
-        job = create_table_job(db, doc)
+        job = _create_scan_job(db, doc, _project_kind(project))
         worker.enqueue(job.id)
     return doc
 
@@ -232,15 +293,15 @@ def create_project_table_jobs(
     only picks up the never-scanned and the failed. `only_failed=true` narrows
     that to just the failures (the queue panel's retry button). `force=true`
     re-scans every document regardless, for the rare "the pipeline changed,
-    redo everything" case. A queued/running document is always skipped."""
+    redo everything" case. A queued/running document is always skipped.
+    The scan TYPE follows the project's kind (tables vs cutouts)."""
     project = _get_project(db, project_id)
+    kind = _project_kind(project)
     jobs = []
     for doc in project.documents:
         last = (
             db.query(ExtractionJob)
-            .filter(
-                ExtractionJob.document_id == doc.id, ExtractionJob.kind == "tables"
-            )
+            .filter(ExtractionJob.document_id == doc.id, _job_kind_filter(kind))
             .order_by(ExtractionJob.id.desc())
             .first()
         )
@@ -251,7 +312,7 @@ def create_project_table_jobs(
         # already scanned clean → leave it alone unless explicitly forced
         if not force and not only_failed and last and last.status == "done":
             continue
-        job = create_table_job(db, doc)
+        job = _create_scan_job(db, doc, kind)
         worker.enqueue(job.id)
         jobs.append(JobOut.model_validate(job))
     return jobs
@@ -272,7 +333,7 @@ def project_queue(project_id: int, db: Session = Depends(get_db)):
             db.query(ExtractionJob)
             .filter(
                 ExtractionJob.document_id.in_(doc_by_id),
-                ExtractionJob.kind == "tables",
+                _job_kind_filter(_project_kind(project)),
             )
             .order_by(ExtractionJob.id)
         ):
@@ -305,7 +366,7 @@ def project_queue(project_id: int, db: Session = Depends(get_db)):
         recent = (
             db.query(ExtractionJob)
             .filter(
-                ExtractionJob.kind == "tables",
+                _job_kind_filter(_project_kind(project)),
                 ExtractionJob.status == "done",
                 ExtractionJob.finished_at.isnot(None),
             )
