@@ -91,6 +91,23 @@
     ]
   },
 
+  "A5.png": {
+    "part": "Ring / gasket (RASTER scan of the same part as Doc_HK3573)",
+    "sheet_scale_text": null,
+    "scale": 5.033,
+    "dim_tolerance": 0.30,
+    "note": "The first raster fixture — the PNG Maoz actually scanned (2026-07-15), which marked the ⊕□1 frame and symbol circles as holes because the paper-vs-metal gate only ran on CAD loops. Scale back-solved from the Ø605 bore measuring 120.2mm of paper. dim_tolerance is 0.30 instead of the default 0.05 because raster measures the INK INTERIOR of a hole: the bore reads -0.7% but the Ø12.5 bolt holes read Ø9.2 (-26%) at this resolution — a known systematic bias, not noise. Shrinking that number is the raster-sizing backlog item; do NOT bake the bias into these true sizes. KNOWN RECALL GAP (13/16 bolt holes): the three at 225/67.5/292.5 degrees have annotation ink drawn THROUGH them — the Ø12.5 leader arrow enters one, the '16x 22.5=360' dimension arc crosses the other two — shattering their interiors into sub-mm fragments beyond sliver re-fusion. Recovering ink-crossed holes is the next raster recall item.",
+    "cutouts": [
+      { "shape": "circle", "diameter_mm": 12.5, "qty": 16, "source": "labelled 'Ø 12.5 +0.5 -0.2 (16x)'" },
+      { "shape": "circle", "diameter_mm": 605.0, "qty": 1, "source": "labelled Ø605 — the central bore" }
+    ],
+    "must_not_detect": [
+      "the ⊕□1 feature-control frame (top-left, on the paper)",
+      "the boxed Ø605 / Ø642 / Ø686 dimension callouts",
+      "glyph counters and label boxes (raster has no ink separation)"
+    ]
+  },
+
   "Doc_HK3573_290626083217_00 (1).pdf": {
     "part": "Ring / gasket",
     "sheet_scale_text": null,

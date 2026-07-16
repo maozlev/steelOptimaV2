@@ -29,7 +29,7 @@ human review → finalize → export.
 
 ## Where accuracy stands
 
-### **100% recall · 100% precision**, per drawing.
+### **100% precision everywhere · 100% recall on vector, 82% on the first scan.**
 
 | Drawing | Part | Scale | True | Found | Recall |
 |---|---|---|---|---|---|
@@ -41,11 +41,19 @@ human review → finalize → export.
 | A (3) | Beam | 1:7.75 | 148 | 148 | 100% |
 | A (4) | Beam | 1:1 | 293 | 293 | 100% |
 | Doc_HK3573 | Gasket | 1:5 | 17 | 17 | 100% |
+| **A5.png** (raster!) | Gasket scan | 1:5.03 | 17 | 14 | **82%** — 3 ink-crossed holes |
 
-**Every drawing finds every cutout and invents none.** The last gap — the flange's notch, a
-whole feature class of cuts open to the part's edge — closed on 2026-07-14 (see §7 below).
-Treat the number with respect, not comfort: eight drawings, and the notch detector has
-exactly one real positive example.
+**No drawing invents a cutout.** Vector finds every real one; the flange's notch — a whole
+feature class of cuts open to the part's edge — closed on 2026-07-14 (see §7 below).
+
+**A5.png is the first raster fixture** — the PNG Maoz actually scanned on 2026-07-15, which
+originally marked the ⊕□1 frame and glyph counters as confident holes and let two label-glyph
+counters impersonate bolt holes. Three raster-only defenses fixed precision (see §8); the 82%
+recall is honest and diagnosed: the three missing bolt holes have annotation ink drawn
+THROUGH them (a leader arrow, the 16x22.5° dimension arc) that shatters their interiors
+beyond sliver re-fusion. Raster also under-reads small hole sizes by a stroke width (it
+measures the ink interior: Ø12.5 reads Ø9.2 at this resolution) — the fixture pins that bias
+with an explicit 0.30 tolerance in ground truth rather than hiding it.
 
 ### The most important file in the repo
 
@@ -251,6 +259,31 @@ semicircular one, or a sheet whose frame face sneaks under `FRAME_AREA_RATIO` wi
 title-block-shaped concavity. More labelled drawings beat more tuning, here more than
 anywhere.
 
+### 8. A scan is blind to half the defenses — it needs its own three
+
+Half of the pipeline's protection keys on structure a PNG simply does not have: ink
+separation reads stroke colour/width (pixels have neither), and the paper-vs-metal gate
+accepted only closed CAD loops — **on raster pages it silently never ran.** That is exactly
+how A5.png marked the ⊕□1 frame and label glyphs as confident holes. Three raster-only
+defenses (2026-07-16), each earned by watching a probe fail:
+
+- **The gate falls back to ink silhouettes.** When `_part_outlines` finds no loops and the
+  source is `raster_cv`, `_structural_parts` (the notch-host predicate: top-level, big,
+  contains something) gates on the synthesized silhouette shells instead.
+- **Silhouettes are eroded ~1pt before tracing** (`PART_DETACH_PT`). Leader and dimension
+  hairlines are ink-CONNECTED to the part on a scan; the raw silhouette of the gasket
+  swallowed its labels — a "part" spanning 42% of the page, inside which every phantom
+  passed the gate. Erode + trace + buffer back detaches them. (Enclosed white pockets
+  between extension lines still weld some annotation to the part — erosion cannot fix
+  that; the glyph rule below catches what leaks through.)
+- **A candidate covered by an OCR word box is a glyph counter** — the hole of a '6' or 'Ø'
+  in the text itself — UNLESS the word is only round glyphs, because OCR reads a drilled
+  hole as the letter 'O' whose box is the hole itself: rasterized A (4) had 39 of 40 real
+  holes "covered" by their own misreading, and the first version of this rule silently
+  vetoed 279 of its 293 holes. RASTER ONLY: on vector pages the same rule deleted two real
+  bolt holes on Doc_HK3573 that live under a text label — the harness caught both within
+  one run.
+
 ---
 
 ## The BOM
@@ -348,23 +381,31 @@ and wrote a comment telling the next person not to try it. **It was never switch
 
 ## Open, in order of value
 
-1. **Grow the fixture set to ~20 real drawings** with confirmed answers. 100/100 on eight
-   samples is one new customer away from being wrong. **The cheapest and most informative thing
-   on this list** — and the notch detector (§7) has exactly one real positive example.
-2. **The crop trap** (above). ~15 lines.
-3. **A (3)'s dimension-line measurement runs a few % long** — its labels imply 7.23/7.53/7.66
+1. **Grow the fixture set to ~20 real drawings** with confirmed answers. Nine samples (one
+   raster) is one new customer away from being wrong. **The cheapest and most informative
+   thing on this list** — and the notch detector (§7) has exactly one real positive example.
+2. **Ink-crossed holes on scans.** A5.png misses 3 of 16 bolt holes because a leader arrow /
+   dimension arc is drawn straight through them, shattering their interiors beyond sliver
+   re-fusion. A whole failure class on real scans, diagnosed, positions known (225°, 67.5°,
+   292.5° on the bolt circle).
+3. **Raster size bias.** Raster measures a hole's ink INTERIOR: Ø12.5 reads Ø9.2 on A5.png.
+   Compensating by the measured stroke width would let the fixture's dim_tolerance shrink
+   from 0.30 toward 0.05 — until then, small-hole sizes from scans are systematically low
+   and the operator must not trust them.
+4. **The crop trap** (above). ~15 lines.
+5. **A (3)'s dimension-line measurement runs a few % long** — its labels imply 7.23/7.53/7.66
    where the truth is 7.75. The resolver correctly refuses to be confident and asks the
    operator. Root cause unknown (probably arrowhead overshoot). **Do not tune against A (3)
    until it is understood.**
-4. **DXF export.** `export.py` even comments about "DXF consumers" but emits JSON only — the
+6. **DXF export.** `export.py` even comments about "DXF consumers" but emits JSON only — the
    actual handoff to nesting/CNC, and the product's missing last mile. *(If DXF ever becomes
    available as an* input *for some customers, that path is exact — a DXF carries geometry and
    layers outright, no inference. PDF is a lossy picture of one.)*
-5. **A document is not marked stale after a pipeline change.** Maoz was looking at 112
+7. **A document is not marked stale after a pipeline change.** Maoz was looking at 112
    candidates from a job run before the fixes; a re-run gives 17. Nothing tells you to re-run.
-6. **No WS reconnect / polling fallback.** A dropped socket disables "Run extraction" forever.
+8. **No WS reconnect / polling fallback.** A dropped socket disables "Run extraction" forever.
    `GET /api/jobs/{id}` exists and is never called.
-7. **Finalize is a permanent lock.** No unlock endpoint; the only escape is deleting the doc.
+9. **Finalize is a permanent lock.** No unlock endpoint; the only escape is deleting the doc.
 
 ---
 

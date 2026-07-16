@@ -265,14 +265,17 @@ def _part_outlines(inner: list[tuple[Polygon, bool]]) -> list[Polygon]:
     ]
 
 
-def _notch_hosts(inner: list[tuple[Polygon, bool]]) -> list[Polygon]:
-    """Shells whose outline is worth checking for notches.
+def _structural_parts(inner: list[tuple[Polygon, bool]]) -> list[Polygon]:
+    """Shells that qualify as part outlines on structure alone — faces eligible.
 
     Unlike _part_outlines, planar faces ARE eligible: a part whose profile never closes
-    into a single CAD loop (the flange, 12562's octagon) exists only as a face, and the
-    flange's notch is exactly the case this has to catch. The other conditions still
-    hold — top-level, big, and containing something — so title-block cells and the gaps
-    between dimension lines stay out.
+    into a single CAD loop (the flange, 12562's octagon) exists only as a face. The
+    other conditions still hold — top-level, big, and containing something — so
+    title-block cells and the gaps between dimension lines stay out.
+
+    Two users: notch hosting (the flange's notch lives on a face-only outline), and
+    the paper-vs-metal gate on RASTER pages, where nothing is ever a CAD loop — a
+    scan's part "outlines" are ink-silhouette contours, faces by construction.
     """
     if not inner:
         return []
@@ -307,7 +310,7 @@ def _notch_candidates(inner: list[tuple[Polygon, bool]], source: str) -> list[Ca
     340x100 notch is 14% of its part at rect fit 0.97.
     """
     out: list[Candidate] = []
-    for host in _notch_hosts(inner):
+    for host in _structural_parts(inner):
         hull = host.convex_hull
         diff = hull.difference(host)
         pieces = list(diff.geoms) if diff.geom_type == "MultiPolygon" else [diff]
@@ -482,6 +485,13 @@ def build_candidates(
     # A cutout is cut out of a PART. A shape sitting outside every part is on the paper,
     # not in the metal — a title-block symbol, a projection marker, a control frame.
     parts = _part_outlines(inner)
+    if not parts and source == "raster_cv":
+        # A scan has no CAD loops at all, so the loop-only rule above finds nothing
+        # and the paper-vs-metal gate silently never ran on raster pages — which is
+        # exactly how A5.png marked the ⊕□1 frame as two confident holes. The raster
+        # pipeline synthesizes ink-silhouette shells for the parts instead; the same
+        # structural conditions (top-level, big, contains something) apply to them.
+        parts = _structural_parts(inner)
 
     candidates: list[Candidate] = []
     for s, from_loop, parent in with_parent:

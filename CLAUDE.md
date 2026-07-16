@@ -65,8 +65,10 @@ cd server && uv run python tools/eval_detection.py
 ```
 
 It scores the pipeline against `tests/fixtures/ground_truth.json` — the right answers,
-confirmed by Maoz against the actual drawings. **Currently 100% recall / 100% precision per
-drawing.** Every significant fix in this project was found or validated by that harness, and
+confirmed by Maoz against the actual drawings. **Currently 100% precision everywhere; 100%
+recall on the eight vector drawings, 82% on the first raster fixture (A5.png — three bolt
+holes with annotation ink drawn through them, a diagnosed open item).** Every significant
+fix in this project was found or validated by that harness, and
 *three were reverted by it*. Run it before and after any change. Trust the **macro**
 (per-drawing) number: micro flatters, because A (4) contributes 293 identical holes.
 

@@ -18,6 +18,15 @@ MAX_ASSOC_DIST_PT = 150.0
 # words bigger than this fraction of the candidate box are the shape itself
 # misread as a glyph (a drilled hole OCRs as the letter "O"), not a label
 TEXT_IN_BOX_MAX_RATIO = 0.5
+# a candidate whose bbox fits inside a recognized word's bbox (plus this slack)
+# is a glyph counter — the enclosed hole of a '6', '0' or 'Ø' in the text itself
+GLYPH_COVER_SLACK_PT = 1.5
+# ...unless the covering "word" is itself just round shapes: OCR reads a drilled
+# hole as the letter 'O' whose box is the hole itself (rasterized A (4): 39 of 40
+# real holes were "covered" by their own misreading). A round-glyph-only word is
+# the shape, not text about it. A '6' or 'e' is NOT round-only, so the counters
+# punched inside real characters still get vetoed.
+ROUND_GLYPHS = set("OoQDC0©®@°·●○⊙Øøº()（）ＯｏＱＣＤ０")
 
 DIA_RE = re.compile(r"[Øø⌀∅¢](?:\s*)(\d+(?:[.,]\d+)?)")
 SLOT_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)")
@@ -154,6 +163,25 @@ def annotate_candidates(candidates: list[Candidate], words: list[OcrWord]) -> No
                 and b[1] <= word.center[1] <= b[3]
                 and _word_area(word) <= TEXT_IN_BOX_MAX_RATIO * box_area
                 and c.polygon.contains(Point(word.center))
+                for word in words
+            )
+        # The mirror case: a candidate INSIDE a recognized word is a glyph, not a
+        # hole — the counter of a '6' or the bowl of a 'Ø' is a perfect circle and
+        # no shape rule will ever say otherwise. RASTER ONLY: a scan has no ink
+        # layers, so the word box is the only evidence that this circle is part of
+        # the text that drew it (A5.png: the 'Ø 686 ±2' callout's glyph counter
+        # scored 0.92 as a Ø11.7 bolt hole). Vector pages already kill glyphs via
+        # ink separation — and their embedded text words can legitimately overlap
+        # a real hole (Doc_HK3573's PDF lost two true bolt holes to this rule
+        # before it was scoped to scans; the eval harness caught it).
+        if not c.contains_text and text_sized and c.source == "raster_cv":
+            c.contains_text = any(
+                word.bbox[0] - GLYPH_COVER_SLACK_PT <= b[0]
+                and word.bbox[1] - GLYPH_COVER_SLACK_PT <= b[1]
+                and word.bbox[2] + GLYPH_COVER_SLACK_PT >= b[2]
+                and word.bbox[3] + GLYPH_COVER_SLACK_PT >= b[3]
+                # a round-glyph-only word IS the hole misread, not text about it
+                and not set(word.text.replace(" ", "")) <= ROUND_GLYPHS
                 for word in words
             )
 

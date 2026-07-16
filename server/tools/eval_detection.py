@@ -13,6 +13,7 @@ missed cutout means a part is manufactured wrong, a false positive only costs a 
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import fitz
@@ -23,6 +24,8 @@ from app.bom.shapes import shape_metrics  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.extraction.scoring import score_candidates  # noqa: E402
 from app.extraction.service import _page_candidates  # noqa: E402
+from app.ingestion.page_classifier import classify_page  # noqa: E402
+from app.ingestion.renderer import render_page  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 PDFS = ROOT / "pdfs"
@@ -50,9 +53,9 @@ def found_dims(m: dict) -> list[float]:
     return [d["bbox_w_mm"], d["bbox_h_mm"]]
 
 
-def close(a: list[float], b: list[float]) -> bool:
+def close(a: list[float], b: list[float], tol: float = DIM_TOLERANCE) -> bool:
     return len(a) == len(b) and all(
-        abs(x - y) <= DIM_TOLERANCE * max(y, 1e-9) for x, y in zip(a, b)
+        abs(x - y) <= tol * max(y, 1e-9) for x, y in zip(a, b)
     )
 
 
@@ -73,18 +76,34 @@ def main() -> int:
             continue
 
         scale = spec.get("scale")
-        doc = fitz.open(pdf)
+        # raster measures the ink INTERIOR of a hole, which under-reads small
+        # ones by a stroke width — scans may loosen the gate, stating it here
+        tolerance = spec.get("dim_tolerance", DIM_TOLERANCE)
+        if pdf.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            # mirror ingestion: images are converted to PDF first; only the
+            # converted page classifies as "raster" (a directly-opened image
+            # reports no embedded images and would silently take the vector path)
+            with fitz.open(pdf) as img:
+                doc = fitz.open("pdf", img.convert_to_pdf())
+        else:
+            doc = fitz.open(pdf)
 
         # what the pipeline would actually put in the BOM: auto-approved only
         reported: list[dict] = []
         for pno in range(doc.page_count):
             page = doc[pno]
+            page_kind = classify_page(page)
+            rp, dpi = "", settings.render_dpi
+            if page_kind == "raster":
+                # scans go through the CV pipeline exactly as ingestion runs it
+                rp = Path(tempfile.gettempdir()) / f"eval_{name}_{pno}.png"
+                dpi = render_page(page, rp, settings.render_dpi)
 
             class _Row:  # _page_candidates only reads these
                 index = pno
-                kind = "vector"
-                render_path = ""
-                render_dpi = settings.render_dpi
+                kind = page_kind
+                render_path = str(rp)
+                render_dpi = dpi
 
             cands = _page_candidates(doc, _Row())
             for c, s in zip(cands, score_candidates(cands)):
@@ -114,7 +133,7 @@ def main() -> int:
                 want = truth_dims(t)
                 if want is None:
                     continue
-                if m["shape"] == t["shape"] and close(sorted(got), sorted(want)):
+                if m["shape"] == t["shape"] and close(sorted(got), sorted(want), tolerance):
                     hits += 1
                     remaining.pop(i)
                     break

@@ -36,6 +36,15 @@ SLIVER_MIN_INLIERS = 0.79
 # part silhouettes — without the gate every glyph outline becomes a shell and
 # letter counters gain parents (= false cutouts)
 PART_SHELL_MIN_AREA_FRAC = 0.005
+# Detach annotation hairlines before tracing part silhouettes. Leader and
+# dimension lines are INK-CONNECTED to the part on a scan, so the raw
+# silhouette of the gasket on A5.png swallowed its labels and the ⊕□1 frame —
+# a "part" spanning 42% of the page, inside which every phantom passed the
+# paper-vs-metal gate. Eroding by ~1pt removes lines up to ~2pt wide (leaders,
+# dimensions, centrelines) while real part features survive: the thinnest on
+# the samples is A5's 8pt side-view bar. The traced polygons are buffered back
+# out by the same amount so nothing near a part's rim changes side.
+PART_DETACH_PT = 1.0
 
 
 def _load_ink(render_path: Path) -> np.ndarray:
@@ -157,8 +166,13 @@ def extract_raster_candidates(
     # part-outline shells: everything that is not background (ink strokes plus
     # the enclosed white faces) forms the part silhouette. Without these outer
     # shells, enclosed candidates have no parent in build_candidates and are
-    # dropped as "part outlines" themselves.
+    # dropped as "part outlines" themselves. The mask is ERODED first — see
+    # PART_DETACH_PT — so hairline leaders/dimensions no longer weld labels and
+    # symbols onto the part, and the traced polygons are buffered back out.
     part_mask = np.where(np.isin(labels, list(border_ids)), 0, 255).astype(np.uint8)
+    detach_px = max(1, int(round(PART_DETACH_PT * px_per_pt)))
+    k = 2 * detach_px + 1
+    part_mask = cv2.erode(part_mask, np.ones((k, k), np.uint8))
     part_contours, _ = cv2.findContours(
         part_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
@@ -180,6 +194,8 @@ def extract_raster_candidates(
                 poly = poly.buffer(0)
                 if poly.geom_type == "MultiPolygon":
                     poly = max(poly.geoms, key=lambda g: g.area)
+            # restore what the detach erosion shaved off the silhouette
+            poly = poly.buffer(PART_DETACH_PT)
         except Exception:
             continue
         if poly.is_valid and poly.area >= MIN_CUTOUT_AREA_PT2:
