@@ -1,4 +1,28 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import json,sys; ts=json.load\\(sys.stdin\\); [print\\(t['id'], t['kind'], t['status'], f\\\\\"{t['n_rows']}x{t['n_cols']}\\\\\", 'rows:', t['row_count'], 'flagged:', t['needs_review_rows'], 'conf:', t['confidence'], repr\\(t['title']\\)\\) for t in ts]\")",
+      "Bash(git commit -m ' *)",
+      "Bash(curl -s http://localhost:8000/api/documents)",
+      "Bash(python -c \"import json,sys; [print\\(d['id'], d['filename']\\) for d in json.load\\(sys.stdin\\)[:12]]\")",
+      "Bash(curl -s http://localhost:8000/api/projects)",
+      "Bash(curl -s \"http://localhost:8000/api/projects/1\")",
+      "Bash(cat \"C:\\\\Users\\\\Maoz\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Maoz-OneDrive--------------projects-steelOptimaV2\\\\46cfaad3-9336-46b7-9553-5a79f611836d\\\\tasks\\\\bx41j4w0e.output\"; tail -c 300 /tmp/steelserver.log 2>/dev/null)",
+      "Read(//tmp/**)",
+      "Read(//c/Users/Maoz/OneDrive/שולחן העבודה/projects/.claude/**)",
+      "Bash(git check-ignore *)",
+      "Bash(python -c \"import json; d=json.load\\(open\\(r'../.claude/settings.local.json', encoding='utf-8'\\)\\); print\\(d\\)\")",
+      "PowerShell(\\(Get-Content \".claude/settings.local.json\" -Raw | ConvertFrom-Json\\) | ConvertTo-Json -Depth 5; git check-ignore -q .claude/settings.local.json && \"gitignored: yes\" || \"gitignored: NO\")",
+      "Bash(curl -s \"http://localhost:8000/api/jobs/15\")",
+      "Bash(cat \"C:\\\\Users\\\\Maoz\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Maoz-OneDrive--------------projects-steelOptimaV2\\\\46cfaad3-9336-46b7-9553-5a79f611836d\\\\tasks\\\\bx1hrgpqe.output\"; echo; tail -c 200 /tmp/steelserver.log)",
+      "Bash(curl -s \"http://localhost:8000/api/documents/10/tables\" -o /tmp/tables.json)",
+      "Bash(curl -s http://localhost:11434/api/ps)",
+      "Bash(curl -s \"http://localhost:8000/api/jobs/16\")"
+    ]
+  },
+  "enabledPlugins": {
+    "ponytail@ponytail": true
+  },
   "extraKnownMarketplaces": {
     "ponytail": {
       "source": {
@@ -6,8 +30,5 @@
         "repo": "DietrichGebert/ponytail"
       }
     }
-  },
-  "enabledPlugins": {
-    "ponytail@ponytail": true
   }
 }
