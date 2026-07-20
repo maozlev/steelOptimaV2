@@ -14,6 +14,7 @@ from app.api import (
     health,
     jobs,
     orders,
+    planning,
     pricing,
     projects,
     tables,
@@ -78,6 +79,7 @@ app.include_router(projects.router)
 app.include_router(tables.router)
 app.include_router(pricing.router)
 app.include_router(orders.router)
+app.include_router(planning.router)
 app.include_router(export.router)
 app.include_router(telemetry.router)
 app.include_router(events.router)

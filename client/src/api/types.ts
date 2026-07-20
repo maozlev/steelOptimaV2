@@ -357,6 +357,25 @@ export interface OrderPlanOut {
   result: OrderPlanResult | SheetPlanResult;
 }
 
+// a drawing/sketch analyzed into proposed plan items — nothing is added
+// to the plan until the user accepts each proposal
+export interface ProposedItem {
+  material_key: string;
+  qty: number;
+  unit_length_mm: number | null;
+  thk_mm: number | null;
+  w_mm: number | null;
+  h_mm: number | null;
+  area_m2: number | null;
+  source: "table_ocr" | "vlm";
+}
+
+export interface AnalyzeResult {
+  items: ProposedItem[];
+  source: string;
+  warnings: string[];
+}
+
 export type BarOrderPlanOut = OrderPlanOut & { result: OrderPlanResult };
 export type SheetOrderPlanOut = OrderPlanOut & { result: SheetPlanResult };
 

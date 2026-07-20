@@ -1,5 +1,6 @@
 import type {
   AggregateBom,
+  AnalyzeResult,
   ChatMessageOut,
   ChatScope,
   ConfigOut,
@@ -129,6 +130,16 @@ export const api = {
     const form = new FormData();
     form.append("file", file);
     return request<DocumentDetailOut>(`/api/projects/${projectId}/documents`, {
+      method: "POST",
+      body: form,
+    });
+  },
+
+  /** Analyze a drawing (PDF/PNG/JPEG or whiteboard sketch) into proposed plan items. */
+  analyzeDrawing(file: File | Blob, filename = "sketch.png") {
+    const form = new FormData();
+    form.append("file", file, file instanceof File ? file.name : filename);
+    return request<AnalyzeResult>(`/api/planning/analyze`, {
       method: "POST",
       body: form,
     });

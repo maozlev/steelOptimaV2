@@ -34,6 +34,10 @@ export interface PlanState {
   platePrice: Record<string, { price: number; unit: PlateUnit }>;
   kerf_mm: number;
   nextId: number;
+  // The drawing question: use warehouse pieces where they fit, or treat the
+  // drawing's dimensions as authoritative and order everything new?
+  // null = not answered yet — the UI asks once items exist.
+  useInventory: boolean | null;
 }
 
 export const emptyPlan = (): PlanState => ({
@@ -43,6 +47,7 @@ export const emptyPlan = (): PlanState => ({
   platePrice: {},
   kerf_mm: 3,
   nextId: 1,
+  useInventory: null,
 });
 
 const storageKey = (projectId: number) => `steeloptima.plan.${projectId}`;
@@ -101,7 +106,13 @@ export interface Allocation {
 // Greedy allocation in item order: two lines wanting the same stock pool split
 // it first-come-first-served. Bars draw from byLength[len]; plates (and bars
 // with no length) draw from the flat qty pool. Unknown materials → all missing.
-export function allocate(items: PlanItem[]): Allocation[] {
+// useInventory false = order everything new (the drawing's dims are final and
+// warehouse offcuts must not be substituted); null behaves like true so the
+// numbers are visible while the question is still open.
+export function allocate(items: PlanItem[], useInventory: boolean | null = true): Allocation[] {
+  if (useInventory === false) {
+    return items.map((i) => ({ inStock: 0, missing: i.qty }));
+  }
   const pool = new Map<string, number>();
   const poolKey = (i: PlanItem) =>
     isPlate(i) || i.unit_length_mm == null

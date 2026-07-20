@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { BarOrderPlanOut } from "../api/types";
+import type { BarOrderPlanOut, ProposedItem } from "../api/types";
 import { MOCK_INVENTORY } from "../mockInventory";
 import {
   allocate,
@@ -18,14 +18,15 @@ import {
 } from "../planning";
 import { readViewContext, setViewSection } from "../viewContext";
 import ChatPanel from "./ChatPanel";
+import WhiteboardModal from "./WhiteboardModal";
 import { OrderResult } from "./OrdersPanel";
 
 // The action menu for the planning conversation — replaces the global one.
 const PLAN_TOOLS = `[[TOOLS]]
 You are planning a build WITH the user, in two stages. Stage "draft": build the parts list. Stage "approved": price the missing parts and optimize the buy. The context lists warehouse stock, plan items (in stock / missing), stage, seller catalogs, plate prices and optimization results — answer availability questions from it. To change the plan when asked, end your answer with blocks like:
 [[ACTION]]{"type":"plan_add_item","material_key":"L50X50X5","unit_length_mm":2000,"qty":8}[[/ACTION]]
-Types: plan_add_item{material_key,qty,unit_length_mm for bars | thk_mm,w_mm,h_mm for plates} · plan_set_qty{material_key,qty,unit_length_mm?} · plan_remove_item{material_key,unit_length_mm?} · plan_approve{} (lock the list, move to buying) · plan_reopen{} (back to editing) · plan_set_stock{material_key,lengths:[{length_mm,price}]} (seller bar catalog, ₪/bar) · plan_set_plate_price{material_key,price,unit:per_kg|per_m3} · plan_set_kerf{kerf_mm} · plan_optimize{} (approved stage only)
-Item edits work only in draft; optimize only after approval. Strict JSON inside blocks. Never act unasked.
+Types: plan_add_item{material_key,qty,unit_length_mm for bars | thk_mm,w_mm,h_mm for plates} · plan_set_qty{material_key,qty,unit_length_mm?} · plan_remove_item{material_key,unit_length_mm?} · plan_approve{} (lock the list, move to buying) · plan_reopen{} (back to editing) · plan_set_stock{material_key,lengths:[{length_mm,price}]} (seller bar catalog, ₪/bar) · plan_set_plate_price{material_key,price,unit:per_kg|per_m3} · plan_set_kerf{kerf_mm} · plan_optimize{} (approved stage only) · plan_use_inventory{} (allocate warehouse pieces to the plan) · plan_order_all{} (drawing dims are final — ignore warehouse, order everything new)
+Item edits work only in draft; optimize only after approval. When the context says use_inventory is UNANSWERED and items exist, ask the user once: use matching warehouse pieces, or are the drawing's dimensions final so everything must be ordered new — then emit plan_use_inventory or plan_order_all per their answer. The user can also attach a drawing (📎) or sketch on the whiteboard (🖌) — proposed items from those appear as cards they accept; you don't need to re-add them. Strict JSON inside blocks. Never act unasked.
 [[/TOOLS]]`;
 
 const inputCls =
@@ -44,13 +45,56 @@ export default function PlanningPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState({ material: "", length: "", qty: "" });
+  // items read from an attached drawing/sketch — proposals only, each needs a click
+  const [proposals, setProposals] = useState<ProposedItem[]>([]);
+  const [analyzeNotes, setAnalyzeNotes] = useState<string[]>([]);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const editing = plan.stage === "draft";
 
   // survives refresh (Maoz's ask) — results stay derived and are re-run on demand
   useEffect(() => savePlan(projectId, plan), [projectId, plan]);
 
-  const alloc = useMemo(() => allocate(plan.items), [plan.items]);
+  const alloc = useMemo(
+    () => allocate(plan.items, plan.useInventory),
+    [plan.items, plan.useInventory],
+  );
+
+  // The drawing question: once there are items and stock could cover some of
+  // them, ask whether to use warehouse pieces or order everything new.
+  const anyStockAvailable = useMemo(
+    () => allocate(plan.items, true).some((a) => a.inStock > 0),
+    [plan.items],
+  );
+  const askInventoryQuestion =
+    plan.items.length > 0 && plan.useInventory === null && anyStockAvailable;
+
+  async function analyzeFile(file: File | Blob, filename?: string) {
+    setAnalyzing(true);
+    setError(null);
+    try {
+      const res = await api.analyzeDrawing(file, filename);
+      setProposals((prev) => [...prev, ...res.items]);
+      setAnalyzeNotes(res.warnings);
+      if (res.items.length === 0 && res.warnings.length === 0)
+        setAnalyzeNotes(["nothing readable found in the file"]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  function acceptProposal(p: ProposedItem) {
+    const dims =
+      p.thk_mm != null && p.w_mm != null && p.h_mm != null
+        ? { thk_mm: p.thk_mm, w_mm: p.w_mm, h_mm: p.h_mm }
+        : undefined;
+    addItem(p.material_key, p.qty, p.unit_length_mm ?? undefined, dims);
+    setProposals((prev) => prev.filter((x) => x !== p));
+  }
 
   /* ---------- mutations (used by both the board UI and the agent) ---------- */
 
@@ -101,7 +145,7 @@ export default function PlanningPanel({
     setBusy(true);
     try {
       // group missing bar pieces per material
-      const allocNow = allocate(plan.items);
+      const allocNow = allocate(plan.items, plan.useInventory);
       const byMat = new Map<string, Map<number, number>>();
       plan.items.forEach((it, idx) => {
         if (isPlate(it) || it.unit_length_mm == null) return;
@@ -225,6 +269,12 @@ export default function PlanningPanel({
           setPlan((p) => ({ ...p, kerf_mm: kerf }));
           return `kerf → ${kerf}mm`;
         }
+        case "plan_use_inventory":
+          setPlan((p) => ({ ...p, useInventory: true }));
+          return "using warehouse pieces where they fit";
+        case "plan_order_all":
+          setPlan((p) => ({ ...p, useInventory: false }));
+          return "ordering everything new — warehouse not touched";
         case "plan_optimize":
           if (editing)
             throw new Error("approve the plan first (plan_approve), then optimize");
@@ -240,7 +290,11 @@ export default function PlanningPanel({
   /* ---------- what the agent sees ---------- */
 
   useEffect(() => {
-    const lines = [`planning board (stage: ${plan.stage}):`];
+    const lines = [
+      `planning board (stage: ${plan.stage}, use_inventory: ${
+        plan.useInventory === null ? "UNANSWERED" : plan.useInventory
+      }):`,
+    ];
     lines.push(
       "warehouse: " +
         (Object.entries(MOCK_INVENTORY)
@@ -372,6 +426,144 @@ export default function PlanningPanel({
           </button>
         )}
       </div>
+
+      {/* drawing intake: attach a file or sketch; proposals need a click each */}
+      <div className="flex shrink-0 flex-wrap items-center gap-2 rounded border border-zinc-800 px-4 py-2">
+        <span className="text-xs text-zinc-400">Read the parts from a drawing:</span>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf,.png,.jpg,.jpeg,.webp"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void analyzeFile(f);
+            e.target.value = "";
+          }}
+        />
+        <button
+          onClick={() => fileRef.current?.click()}
+          disabled={analyzing}
+          className="rounded bg-zinc-800 px-2.5 py-1 text-xs hover:bg-zinc-700 disabled:opacity-40"
+          title="Attach a PDF (read deterministically) or PNG/JPEG (read by the vision model)"
+        >
+          📎 Attach PDF / image
+        </button>
+        <button
+          onClick={() => setWhiteboardOpen(true)}
+          disabled={analyzing}
+          className="rounded bg-zinc-800 px-2.5 py-1 text-xs hover:bg-zinc-700 disabled:opacity-40"
+          title="Sketch the parts on a whiteboard — typed labels read far better than handwriting"
+        >
+          🖌 Whiteboard
+        </button>
+        {analyzing && <span className="text-xs text-zinc-500">Reading the drawing…</span>}
+        {analyzeNotes.map((w, i) => (
+          <span key={i} className="text-xs text-amber-300">
+            {w}
+          </span>
+        ))}
+      </div>
+
+      {proposals.length > 0 && (
+        <div className="shrink-0 rounded border border-sky-900 bg-sky-950/30 px-4 py-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-sm font-medium text-sky-200">
+              Proposed from the drawing — accept what's right
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => [...proposals].forEach(acceptProposal)}
+                disabled={!editing}
+                title={editing ? "Add every proposal to the plan" : "Reopen the plan to add items"}
+                className="rounded bg-emerald-700 px-2.5 py-1 text-xs font-medium hover:bg-emerald-600 disabled:opacity-40"
+              >
+                Accept all
+              </button>
+              <button
+                onClick={() => setProposals([])}
+                className="rounded bg-zinc-800 px-2.5 py-1 text-xs hover:bg-zinc-700"
+              >
+                Dismiss all
+              </button>
+            </div>
+          </div>
+          <ul className="flex flex-col gap-1">
+            {proposals.map((p, i) => (
+              <li key={i} className="flex items-center gap-3 text-sm">
+                <span className="min-w-40 font-medium">{p.material_key}</span>
+                <span className="tabular-nums text-zinc-300">×{p.qty}</span>
+                <span className="text-xs text-zinc-400">
+                  {p.unit_length_mm != null
+                    ? `${p.unit_length_mm} mm`
+                    : p.w_mm != null && p.h_mm != null
+                      ? `${p.w_mm}×${p.h_mm}${p.thk_mm != null ? `×${p.thk_mm}` : ""} mm`
+                      : "no dims"}
+                </span>
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] ${
+                    p.source === "vlm"
+                      ? "bg-amber-900/60 text-amber-300"
+                      : "bg-emerald-900/60 text-emerald-300"
+                  }`}
+                  title={
+                    p.source === "vlm"
+                      ? "Read by the vision model — verify before accepting"
+                      : "Read deterministically from the PDF's table"
+                  }
+                >
+                  {p.source === "vlm" ? "vision — verify!" : "table OCR"}
+                </span>
+                <span className="flex-1" />
+                <button
+                  onClick={() => acceptProposal(p)}
+                  disabled={!editing}
+                  className="rounded bg-emerald-800 px-2 py-0.5 text-xs hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  Add
+                </button>
+                <button
+                  onClick={() => setProposals((prev) => prev.filter((x) => x !== p))}
+                  className="rounded bg-zinc-800 px-2 py-0.5 text-xs hover:bg-zinc-700"
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {askInventoryQuestion && (
+        <div className="flex shrink-0 flex-wrap items-center gap-3 rounded border border-amber-900 bg-amber-950/40 px-4 py-2.5">
+          <span className="text-sm text-amber-200">
+            Some plan items match warehouse stock. Use those pieces — or are the
+            drawing's dimensions final, so everything should be ordered new?
+          </span>
+          <button
+            onClick={() => setPlan((p) => ({ ...p, useInventory: true }))}
+            className="rounded bg-emerald-700 px-3 py-1 text-sm font-medium hover:bg-emerald-600"
+          >
+            Use inventory
+          </button>
+          <button
+            onClick={() => setPlan((p) => ({ ...p, useInventory: false }))}
+            className="rounded bg-zinc-800 px-3 py-1 text-sm hover:bg-zinc-700"
+          >
+            Order everything
+          </button>
+        </div>
+      )}
+
+      {whiteboardOpen && (
+        <WhiteboardModal
+          onClose={() => setWhiteboardOpen(false)}
+          onDone={(blob) => {
+            setWhiteboardOpen(false);
+            void analyzeFile(blob, "whiteboard.png");
+          }}
+        />
+      )}
 
       <div className="flex min-h-0 flex-1 gap-4">
       {/* warehouse, always in sight while planning */}
