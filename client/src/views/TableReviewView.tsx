@@ -256,7 +256,12 @@ export default function TableReviewView({
 
       <div className="flex min-h-0 flex-1 gap-4">
         <div className="w-1/2 overflow-auto rounded border border-zinc-800 bg-white/95 p-2">
-          <img src={tableCropUrl(table.id)} alt="table crop" className="w-full" />
+          <img
+            src={tableCropUrl(table.id)}
+            alt="table crop"
+            className="w-full"
+            style={{ filter: "brightness(0.5) contrast(30)" }}
+          />
         </div>
 
         <div className="flex w-1/2 flex-col overflow-auto rounded border border-zinc-800">
