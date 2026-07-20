@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { ProjectQueueOut } from "../api/types";
 
-function humanEta(seconds: number): string {
-  if (seconds < 90) return `~${Math.max(Math.round(seconds / 10) * 10, 10)}s left`;
-  if (seconds < 3600) return `~${Math.round(seconds / 60)} min left`;
-  return `~${(seconds / 3600).toFixed(1)} h left`;
+/** m:ss of real elapsed time — a fact, not a prediction. Scan time swings from
+ *  under a second to nearly two minutes depending on the drawing, so there is no
+ *  honest "time left"; we show how long the running scan has actually been going. */
+function fmtElapsed(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 /** Live scan-queue for one project. It ONLY exists while there is real work in
@@ -57,6 +59,28 @@ export default function QueuePanel({
     const t = window.setInterval(refresh, 2000);
     return () => window.clearInterval(t);
   }, [active, refresh, onChanged]);
+
+  // Live "elapsed" clock for the running scan. The server hands us the true
+  // elapsed at each 2s poll (measured on its own UTC clock — the client's clock
+  // and timezone never enter into it); between polls we tick forward locally off
+  // a monotonic anchor so the number moves every second instead of jumping.
+  const runningNow = queue?.running[0] ?? null;
+  const anchor = useRef<{ base: number; at: number } | null>(null);
+  useEffect(() => {
+    anchor.current =
+      runningNow?.elapsed_seconds != null
+        ? { base: runningNow.elapsed_seconds, at: performance.now() }
+        : null;
+  }, [runningNow?.job_id, runningNow?.elapsed_seconds]);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!runningNow) return;
+    const t = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [runningNow?.job_id]);
+  const liveElapsed = anchor.current
+    ? anchor.current.base + (performance.now() - anchor.current.at) / 1000
+    : null;
 
   if (!queue) return null;
 
@@ -133,7 +157,6 @@ export default function QueuePanel({
   // Active scan. Denominator is the batch actually going through the pipeline —
   // scanned + failed + running + queued + uploads — never the whole project, so
   // never-scanned hole drawings don't drag the bar to 0%.
-  const runningNow = queue.running[0];
   const inPipeline =
     queue.scanned +
     failed.length +
@@ -150,9 +173,6 @@ export default function QueuePanel({
         <span className="text-sm font-medium">Scanning…</span>
         <span className="text-sm tabular-nums text-zinc-300">
           {doneCount} / {inPipeline} scanned
-          {queue.eta_seconds != null && (
-            <span className="ml-2 text-zinc-500">{humanEta(queue.eta_seconds)}</span>
-          )}
         </span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded bg-zinc-800">
@@ -172,6 +192,11 @@ export default function QueuePanel({
           <span className="text-sky-300">
             <span className="mr-1 inline-block animate-pulse">●</span>
             scanning <span className="text-zinc-200">{runningNow.filename}</span>
+            {liveElapsed != null && (
+              <span className="ml-1.5 tabular-nums text-zinc-500">
+                {fmtElapsed(liveElapsed)}
+              </span>
+            )}
           </span>
         )}
         {waitingCount > 0 && (

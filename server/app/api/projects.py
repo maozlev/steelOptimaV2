@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -322,7 +323,8 @@ def create_project_table_jobs(
 def project_queue(project_id: int, db: Session = Depends(get_db)):
     """The project's scan queue, as the operator should see it: what is being
     scanned now, what is waiting (and where it stands in the global line),
-    what finished, what failed — plus an ETA from this project's own history."""
+    what finished, what failed — plus how long the running scan has actually
+    been going. No ETA: scan time is too drawing-dependent to predict."""
     project = _get_project(db, project_id)
     doc_by_id = {d.id: d for d in project.documents}
 
@@ -356,32 +358,19 @@ def project_queue(project_id: int, db: Session = Depends(get_db)):
     ]
     global_pos = {job_id: i + 1 for i, job_id in enumerate(global_queued_ids)}
 
-    # ETA from this project's own completed scans (fallback: any project's)
-    durations = [
-        (j.finished_at - j.started_at).total_seconds()
-        for j in done
-        if j.finished_at and j.started_at
-    ]
-    if not durations:
-        recent = (
-            db.query(ExtractionJob)
-            .filter(
-                _job_kind_filter(_project_kind(project)),
-                ExtractionJob.status == "done",
-                ExtractionJob.finished_at.isnot(None),
-            )
-            .order_by(ExtractionJob.id.desc())
-            .limit(10)
-            .all()
-        )
-        durations = [
-            (j.finished_at - j.started_at).total_seconds()
-            for j in recent
-            if j.finished_at and j.started_at
-        ]
-    avg = sum(durations) / len(durations) if durations else None
-    remaining = len(queued) + len(running)
-    eta = round(avg * remaining) if avg and remaining else None
+    # No ETA: a scan runs anywhere from 0.4s to 110s depending on the drawing,
+    # so any "time left" is a lie. We report the FACT instead — how long the
+    # job that is running right now has actually been running, measured on the
+    # server's own clock. The client ticks it forward between polls.
+    now = datetime.now(UTC)
+
+    def _elapsed_s(job: ExtractionJob) -> float | None:
+        if job.status != "running" or not job.started_at:
+            return None
+        started = job.started_at
+        if started.tzinfo is None:  # stored as naive UTC (see extraction/service.py)
+            started = started.replace(tzinfo=UTC)
+        return round(max(0.0, (now - started).total_seconds()), 1)
 
     def _entry(job: ExtractionJob) -> dict:
         doc = doc_by_id[job.document_id]
@@ -392,6 +381,7 @@ def project_queue(project_id: int, db: Session = Depends(get_db)):
             "status": job.status,
             "queue_position": global_pos.get(job.id),
             "started_at": job.started_at.isoformat() if job.started_at else None,
+            "elapsed_seconds": _elapsed_s(job),
             "error": job.error,
         }
 
@@ -404,6 +394,4 @@ def project_queue(project_id: int, db: Session = Depends(get_db)):
         "unscanned": [
             {"document_id": d.id, "filename": d.filename} for d in unscanned
         ],
-        "avg_scan_seconds": round(avg, 1) if avg else None,
-        "eta_seconds": eta,
     }

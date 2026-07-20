@@ -349,6 +349,8 @@ export interface QueueEntry {
   status: "queued" | "running" | "failed";
   queue_position: number | null;
   started_at: string | null;
+  /** server-measured wall time the running job has been going; null unless running */
+  elapsed_seconds: number | null;
   error: string | null;
 }
 
@@ -359,6 +361,4 @@ export interface ProjectQueueOut {
   queued: QueueEntry[];
   failed: QueueEntry[];
   unscanned: { document_id: number; filename: string }[];
-  avg_scan_seconds: number | null;
-  eta_seconds: number | null;
 }

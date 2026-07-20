@@ -136,6 +136,47 @@ def test_cutouts_project_scans_for_cutouts(client, frozen_worker):
     )
 
 
+def test_queue_reports_real_elapsed_not_eta(client, frozen_worker):
+    """No predicted ETA anywhere. The queue instead reports how long the
+    running scan has ACTUALLY been going, measured on the server clock the same
+    way the worker stamps it (naive UTC). Queued jobs carry no elapsed."""
+    from datetime import UTC, datetime, timedelta
+
+    import app.db.session as db_session
+    from app.db.models import ExtractionJob
+
+    pid = client.post(
+        "/api/projects", json={"name": "Elapsed", "kind": "cutouts"}
+    ).json()["id"]
+    pdf = TABLES_DIR / "833.1-06-20.pdf"  # unused elsewhere: ingestion dedups by hash
+    with open(pdf, "rb") as f:
+        doc = client.post(
+            f"/api/projects/{pid}/documents",
+            files={"file": (pdf.name, f, "application/pdf")},
+        ).json()
+    client.post(f"/api/projects/{pid}/table-jobs")  # autorun may have made it already
+
+    # freeze the doc's job "running", started 30s ago — stored naive, as the worker does
+    with db_session.SessionLocal() as db:
+        job = (
+            db.query(ExtractionJob)
+            .filter(ExtractionJob.document_id == doc["id"])
+            .order_by(ExtractionJob.id.desc())
+            .first()
+        )
+        job.status = "running"
+        job.started_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=30)
+        db.commit()
+
+    q = client.get(f"/api/projects/{pid}/queue").json()
+    # the guess is gone
+    assert "eta_seconds" not in q and "avg_scan_seconds" not in q
+    # the fact is here, and it is roughly the 30s we seeded (never negative)
+    assert len(q["running"]) == 1 and q["running"][0]["document_id"] == doc["id"]
+    elapsed = q["running"][0]["elapsed_seconds"]
+    assert 29 <= elapsed <= 60, elapsed
+
+
 def test_restart_recovery_requeues_queued(client, project, frozen_worker):
     """Queued jobs survive a restart; a job caught running fails honestly."""
     import app.db.session as db_session
