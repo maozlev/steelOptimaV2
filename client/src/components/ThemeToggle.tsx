@@ -28,7 +28,7 @@ export default function ThemeToggle() {
       // bg-zinc-100 is the OPPOSITE of the page (zinc-950): light circle on the
       // dark theme, dark circle on the light theme — always high-contrast, never
       // camouflaged against the background it floats over.
-      className="fixed bottom-4 right-4 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-zinc-100 text-lg text-zinc-900 shadow-lg ring-1 ring-zinc-900/10 transition hover:bg-zinc-200"
+      className="fixed bottom-4 left-4 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-zinc-100 text-lg text-zinc-900 shadow-lg ring-1 ring-zinc-900/10 transition hover:bg-zinc-200"
     >
       {theme === "dark" ? "☀️" : "🌙"}
     </button>

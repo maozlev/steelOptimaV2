@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type {
   MaterialTableOut,
+  PricingUnit,
   ProjectDetailOut,
   ProjectSummary,
 } from "../api/types";
@@ -33,6 +34,12 @@ const KIND_STYLE: Record<string, string> = {
   unknown: "bg-amber-900/60 text-amber-300",
 };
 
+// The Tables tab shows only settled tables: approved outright, or scanned clean
+// with nothing left to review. Rejected ("ignored") tables and any table still
+// carrying flagged rows are hidden here — they belong in the per-document review.
+const isReadyTable = (t: MaterialTableOut) =>
+  t.status !== "rejected" && t.needs_review_rows === 0 && t.row_count > 0;
+
 export default function ProjectView({
   projectId,
   onBack,
@@ -57,6 +64,8 @@ export default function ProjectView({
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [applyInventory, setApplyInventory] = useState(false);
   const [dockOpen, setDockOpen] = useState(true);
+  // bumped after every agent-run data change so Bid/Orders remount and refetch
+  const [agentTick, setAgentTick] = useState(0);
   const queue = useRef<File[]>([]);
   const pumping = useRef(false);
 
@@ -112,53 +121,111 @@ export default function ProjectView({
     if (tab === "summary" || tab === "orders" || tab === "bid") void loadSummary();
   }, [tab, loadTables, loadSummary]);
 
+  // Execute one action the assistant proposed and the user approved (Run click
+  // in the dock). Returns a short summary for the result bubble; throws → the
+  // bubble shows the failure. Data changes refresh project + summary and bump
+  // agentTick so Bid/Orders remount with fresh data.
+  const runAgentAction = useCallback(
+    async (a: Record<string, unknown>): Promise<string> => {
+      const changed = () => {
+        void refresh();
+        void loadSummary();
+        setAgentTick((t) => t + 1);
+      };
+      switch (a.type) {
+        case "set_price":
+          await api.putPrices(projectId, [
+            {
+              material_key: String(a.material_key),
+              price: Number(a.price),
+              pricing_unit: a.pricing_unit as PricingUnit,
+            },
+          ]);
+          changed();
+          return `price set: ${a.material_key} → ${a.price} ${a.pricing_unit}`;
+        case "approve_table":
+        case "reject_table":
+        case "reopen_table": {
+          const action = String(a.type).replace("_table", "") as
+            | "approve"
+            | "reject"
+            | "reopen";
+          await api.patchTable(Number(a.table_id), { action });
+          changed();
+          return `table #${a.table_id}: ${action} done`;
+        }
+        case "create_order": {
+          const stock = (Array.isArray(a.stock) ? a.stock : []).map((s) => ({
+            length_mm: Number((s as Record<string, unknown>).length_mm),
+            price: Number((s as Record<string, unknown>).price),
+          }));
+          if (stock.length === 0)
+            throw new Error("create_order needs at least one stock length");
+          await api.createOrderPlan(projectId, {
+            material_key: String(a.material_key),
+            stock,
+            kerf_mm: Number(a.kerf_mm ?? 3),
+          });
+          changed();
+          return `order plan created for ${a.material_key}`;
+        }
+        case "start_scan":
+          await api.startTableJob(Number(a.document_id));
+          changed();
+          return `scan started on document #${a.document_id}`;
+        case "delete_document":
+          await api.deleteDocument(Number(a.document_id));
+          changed();
+          return `document #${a.document_id} deleted`;
+        case "switch_tab":
+          setTab(a.tab as Tab);
+          return `switched to ${a.tab} tab`;
+        case "set_inventory_mode":
+          setApplyInventory(Boolean(a.on));
+          return `inventory mode ${a.on ? "on" : "off"}`;
+        default:
+          throw new Error(`unknown action type: ${String(a.type)}`);
+      }
+    },
+    [projectId, refresh, loadSummary],
+  );
+
   // Publish what this screen is showing, so the assistant dock answers about
   // what the operator actually sees. Panels with their own data (Bid, Orders,
   // Inventory) publish a richer "panel" section themselves.
   useEffect(() => {
     if (!project) return;
+    // terse on purpose: this rides along with every chat message
     const lines: string[] = [
-      `Screen: project "${project.name}", tab "${tab}". Inventory mode ${
-        applyInventory
-          ? "ON — quantities shown net of stock (to-order = required − in stock)"
-          : "off — gross quantities"
-      }.`,
+      `tab:${tab} inventory:${applyInventory ? "on(net qty)" : "off"}`,
     ];
-    if (tab === "documents") {
-      lines.push("Documents listed:");
+    if (tab === "documents")
       for (const d of project.documents)
         lines.push(
-          `- ${d.filename}: ${d.page_count} pages, ${d.table_count} tables, ` +
-            `${d.needs_review_rows} rows to review, scan=${d.last_table_job_status ?? "none"}`,
+          `doc#${d.id} ${d.filename} ${d.table_count}tbl ${d.needs_review_rows}flag ${d.last_table_job_status ?? ""}`,
         );
-    }
-    if (tab === "tables") {
-      lines.push("Detected tables listed:");
-      for (const [docId, docTables] of tables) {
-        const doc = project.documents.find((x) => x.id === docId);
+    if (tab === "tables")
+      for (const [, docTables] of tables)
         for (const t of docTables)
           lines.push(
-            `- ${doc?.filename} / ${t.title || `Table #${t.id}`}: ${t.n_rows}×${t.n_cols}, ` +
-              `kind=${t.kind}, status=${t.status}, ${t.needs_review_rows} flagged`,
+            `table#${t.id} ${t.title || ""} ${t.n_rows}r ${t.kind} ${t.status} ${t.needs_review_rows}flag`,
           );
-      }
-    }
     if ((tab === "summary" || tab === "orders" || tab === "bid") && summary) {
-      lines.push(`Approved materials (${summary.rows.length} lines):`);
-      for (const r of summary.rows.slice(0, 40)) {
+      const rows = summary.rows.slice(0, 25);
+      for (const r of rows) {
         if (applyInventory) {
           const nd = netDemand(r);
           lines.push(
-            `- ${r.material_key}: required ${r.qty}, in stock ${nd.inStockQty}, ` +
-              `to order ${nd.netQty}, net weight ${(r.total_weight_kg * nd.factor).toFixed(1)} kg`,
+            `${r.material_key} need${r.qty} stock${nd.inStockQty} order${nd.netQty} ${(r.total_weight_kg * nd.factor).toFixed(0)}kg`,
           );
         } else {
           lines.push(
-            `- ${r.material_key}: qty ${r.qty}, ${(r.total_length_mm / 1000).toFixed(1)} m, ` +
-              `${r.total_weight_kg.toFixed(1)} kg`,
+            `${r.material_key} qty${r.qty} ${(r.total_length_mm / 1000).toFixed(1)}m ${r.total_weight_kg.toFixed(0)}kg`,
           );
         }
       }
+      if (summary.rows.length > rows.length)
+        lines.push(`+${summary.rows.length - rows.length} more`);
     }
     setViewSection("view", lines.join("\n"));
   }, [project, tab, summary, applyInventory, tables]);
@@ -254,7 +321,6 @@ export default function ProjectView({
         {!isCutouts && tabButton("bid", "💰 Bid")}
         {!isCutouts && tabButton("orders", "✂ Orders")}
         {!isCutouts && tabButton("inventory", "📦 Inventory")}
-        {!isCutouts && tabButton("chat", "💬 Chat")}
       </nav>
 
       {error && (
@@ -407,14 +473,15 @@ export default function ProjectView({
           <div className="flex flex-col gap-3">
             {[...tables.entries()].map(([docId, docTables]) => {
               const doc = project.documents.find((d) => d.id === docId);
-              if (!docTables.length) return null;
+              const ready = docTables.filter(isReadyTable);
+              if (!ready.length) return null;
               return (
                 <div key={docId}>
                   <div className="mb-1 text-xs font-medium text-zinc-400">
                     {doc?.filename}
                   </div>
                   <ul className="divide-y divide-zinc-800 rounded border border-zinc-800">
-                    {docTables.map((t) => (
+                    {ready.map((t) => (
                       <li key={t.id} className="flex items-center">
                         <button
                           onClick={() => onOpenTable(t.id)}
@@ -436,19 +503,15 @@ export default function ProjectView({
                             </span>
                           </div>
                           <div className="flex items-center gap-2 text-xs">
-                            {t.needs_review_rows > 0 && (
-                              <span className="rounded bg-amber-900/60 px-2 py-0.5 font-medium text-amber-300">
-                                {t.needs_review_rows} flagged
-                              </span>
-                            )}
-                            {t.status === "approved" && (
+                            {t.status === "approved" ? (
                               <span className="rounded bg-emerald-900/60 px-2 py-0.5 font-medium text-emerald-300">
                                 APPROVED
                               </span>
-                            )}
-                            {t.status === "rejected" && (
-                              <span className="rounded bg-zinc-800 px-2 py-0.5 text-zinc-500">
-                                ignored
+                            ) : (
+                              // scanned clean but the operator hasn't confirmed
+                              // it yet — must not read as approved (no green, no ✓)
+                              <span className="rounded bg-amber-900/60 px-2 py-0.5 font-medium text-amber-300">
+                               PENDING
                               </span>
                             )}
                             <span className="text-zinc-500">→</span>
@@ -460,9 +523,12 @@ export default function ProjectView({
                 </div>
               );
             })}
-            {[...tables.values()].every((v) => v.length === 0) && (
+            {[...tables.values()].every(
+              (v) => v.filter(isReadyTable).length === 0,
+            ) && (
               <p className="mt-6 text-center text-sm text-zinc-500">
-                No tables detected yet — scan documents first.
+                No approved tables. Flagged and ignored tables are hidden here —
+                open a document to review them.
               </p>
             )}
           </div>
@@ -504,11 +570,16 @@ export default function ProjectView({
           ))}
 
         {tab === "bid" && (
-          <BidPanel projectId={projectId} applyInventory={applyInventory} />
+          <BidPanel
+            key={`bid-${agentTick}`}
+            projectId={projectId}
+            applyInventory={applyInventory}
+          />
         )}
 
         {tab === "orders" && (
           <OrdersPanel
+            key={`orders-${agentTick}`}
             projectId={projectId}
             summary={summary}
             applyInventory={applyInventory}
@@ -516,17 +587,41 @@ export default function ProjectView({
         )}
 
         {tab === "inventory" && <InventoryPanel />}
+      </div>
+        </div>
+      </div>
 
-        {tab === "chat" && (
-          <div className="flex h-full flex-col rounded border border-zinc-800 bg-zinc-950">
+      {/* the assistant dock: always there, always knows what's on screen */}
+      {!isCutouts &&
+        (dockOpen ? (
+          <aside className="flex w-96 shrink-0 flex-col border-l border-zinc-800 bg-zinc-950">
+            <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
+              <span className="text-sm font-medium">🤖 Assistant</span>
+              <button
+                onClick={() => setDockOpen(false)}
+                className="rounded px-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+                title="Hide the assistant"
+              >
+                →
+              </button>
+            </div>
             <ChatPanel
               scope="project"
               scopeId={projectId}
-              hint="Context: this project — its documents, materials, prices and order plans"
+              hint="Sees what you see — can act, with your approval"
+              screenContext={readViewContext}
+              onAction={runAgentAction}
             />
-          </div>
-        )}
-      </div>
+          </aside>
+        ) : (
+          <button
+            onClick={() => setDockOpen(true)}
+            className="fixed bottom-4 right-4 rounded-full bg-emerald-800 px-4 py-3 text-lg shadow-lg hover:bg-emerald-700"
+            title="Ask the assistant about this screen"
+          >
+            🤖
+          </button>
+        ))}
     </div>
   );
 }

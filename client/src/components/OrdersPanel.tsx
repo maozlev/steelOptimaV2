@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { OrderPlanOut, ProjectSummary, SummaryRow } from "../api/types";
 import { netDemand } from "../mockInventory";
+import { setViewSection } from "../viewContext";
 
 interface StockDraft {
   length_mm: string;
@@ -432,6 +433,31 @@ export default function OrdersPanel({
       return next;
     });
   }
+
+  // tell the assistant dock which order plans are on screen (terse — this
+  // rides along with every chat message)
+  useEffect(() => {
+    const lines = ["order plans:"];
+    for (const m of materials) {
+      const plan = history.find((h) => h.params.material_key === m.material_key);
+      if (!plan) {
+        lines.push(`${m.material_key} none`);
+        continue;
+      }
+      const r = plan.result;
+      lines.push(
+        `${m.material_key} buy ` +
+          r.order.map((o) => `${o.count}×${o.stock_length_mm}mm@${o.unit_price}₪`).join("+") +
+          ` =${r.total_cost}₪ waste${r.waste_pct}%` +
+          (r.infeasible_lengths_mm.length
+            ? ` INFEASIBLE:${r.infeasible_lengths_mm.join(",")}mm`
+            : ""),
+      );
+    }
+    setViewSection("panel", lines.join("\n"));
+    return () => setViewSection("panel", null);
+    // materials derives from summary; stringify to avoid re-publishing every render
+  }, [history, checked, summary]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shownMaterials = materials.filter((m) => checked.has(m.material_key));
 

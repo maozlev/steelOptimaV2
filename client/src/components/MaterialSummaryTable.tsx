@@ -216,9 +216,17 @@ export default function MaterialSummaryTable({
                           .join(", ") || "—"}
                       </td>
                       <td
-                        className="max-w-48 truncate px-2 py-1.5 text-xs text-zinc-500"
+                        className="max-w-64 px-2 py-1.5 text-xs text-zinc-500"
                         title={(showProjects ? r.projects : r.documents).join(", ")}
                       >
+                        {/* wrap, don't truncate: a hidden contributor reads as a
+                            missing document (e.g. "why isn't synthetic_03 here?"
+                            when it's folded into this material by material_key) */}
+                        {!showProjects && r.documents.length > 1 && (
+                          <span className="mr-1 rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-400">
+                            {r.documents.length} docs
+                          </span>
+                        )}
                         {(showProjects ? r.projects : r.documents).join(", ")}
                       </td>
                     </tr>

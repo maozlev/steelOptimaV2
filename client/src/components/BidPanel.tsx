@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { BidOut, PriceEntry, PricingUnit } from "../api/types";
 import { netDemand } from "../mockInventory";
+import { setViewSection } from "../viewContext";
 
 const UNIT_LABEL: Record<PricingUnit, string> = {
   per_kg: "₪ / kg",
@@ -32,6 +33,28 @@ export default function BidPanel({
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // tell the assistant dock what the bid table shows right now (terse — this
+  // rides along with every chat message)
+  useEffect(() => {
+    if (!bid) return;
+    const lines = [`bid(${applyInventory ? "net" : "gross"}):`];
+    let total = 0;
+    for (const r of bid.rows) {
+      const factor = applyInventory ? netDemand(r).factor : 1;
+      const lineTotal = r.line_total != null ? r.line_total * factor : null;
+      if (lineTotal != null) total += lineTotal;
+      lines.push(
+        `${r.material_key} qty${applyInventory ? netDemand(r).netQty : r.qty} ` +
+          (r.price != null
+            ? `@${r.price}${(r.pricing_unit ?? "").replace("per_", "/")} =${lineTotal != null ? Math.round(lineTotal) : "?"}₪`
+            : "UNPRICED"),
+      );
+    }
+    lines.push(`total ${Math.round(total)}₪ (priced lines only)`);
+    setViewSection("panel", lines.join("\n"));
+    return () => setViewSection("panel", null);
+  }, [bid, applyInventory]);
 
   function draftFor(key: string): PriceEntry | undefined {
     return drafts.get(key);

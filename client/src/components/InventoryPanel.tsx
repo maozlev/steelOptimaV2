@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { CATEGORY_LABEL, materialCategory } from "../materials";
 import { MOCK_INVENTORY } from "../mockInventory";
+import { setViewSection } from "../viewContext";
 
 // Read-only view of the (mock) stock table. Bars carry per-length quantities,
 // plates a flat quantity. This is the same data netDemand() subtracts from the
@@ -19,6 +21,21 @@ export default function InventoryPanel() {
       (a, b) =>
         a.category.localeCompare(b.category) || a.key.localeCompare(b.key),
     );
+
+  // tell the assistant dock what stock is on screen (terse)
+  useEffect(() => {
+    const lines = ["stock:"];
+    for (const r of rows)
+      lines.push(
+        `${r.key} ` +
+          (r.lengths.length > 0
+            ? r.lengths.map((l) => `${l.qty}×${l.len}mm`).join(",")
+            : `qty${r.totalQty}`),
+      );
+    setViewSection("panel", lines.join("\n"));
+    return () => setViewSection("panel", null);
+    // rows is rebuilt each render from a constant — publish once
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex flex-col gap-3">
