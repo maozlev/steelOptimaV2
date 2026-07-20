@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api, tableCropUrl } from "../api/client";
 import type {
   MaterialRowOut,
@@ -16,6 +16,8 @@ const FLAG_TEXT: Record<string, string> = {
   total_length_mm_not_positive: "total length ≤ 0",
   unit_weight_kg_not_positive: "unit weight ≤ 0",
   total_weight_kg_not_positive: "total weight ≤ 0",
+  area_x_thk_weight_mismatch: "area × thickness × steel density ≠ weight",
+  area_exceeds_qty_x_bounding_rect: "area larger than qty × W×H",
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -163,6 +165,13 @@ export default function TableReviewView({
     : table.rows.filter((r) => r.status !== "auto_approved");
   const fmt = (v: number | null) => (v == null ? "—" : v.toLocaleString());
 
+  // A mixed BOM holds two row species: bars (cut lengths) and plates (W×H,
+  // area, THK). Split them into separate tables so each gets honest headers.
+  const isPlate = (r: MaterialRowOut) =>
+    r.width_mm != null || r.area_m2 != null || r.thk_mm != null;
+  const plateRows = visibleRows.filter(isPlate);
+  const barRows = visibleRows.filter((r) => !isPlate(r));
+
   return (
     <div className="flex h-full flex-col gap-4 p-6">
       <header className="flex items-center justify-between">
@@ -278,21 +287,81 @@ export default function TableReviewView({
               show auto-approved
             </label>
           </div>
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-zinc-950 text-left text-xs text-zinc-500">
-              <tr>
-                <th className="px-2 py-1.5 font-normal">#</th>
-                <th className="px-2 py-1.5 font-normal">Material</th>
-                <th className="px-2 py-1.5 font-normal">Qty</th>
-                <th className="px-2 py-1.5 font-normal">Unit len</th>
-                <th className="px-2 py-1.5 font-normal">Total len</th>
-                <th className="px-2 py-1.5 font-normal">Weight kg</th>
-                <th className="px-2 py-1.5 font-normal">Status</th>
-                <th className="px-2 py-1.5 font-normal"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleRows.map((r) =>
+          {(() => {
+            // cells shared by both species — the middle columns differ
+            const startCells = (r: MaterialRowOut) => (
+              <>
+                <td className="px-2 py-1.5 text-xs text-zinc-500">
+                  {r.row_index + 1}
+                </td>
+                <td className="px-2 py-1.5">
+                  <div className="font-medium">{r.material_key ?? "—"}</div>
+                  {r.description && (
+                    <div className="text-xs text-zinc-500">{r.description}</div>
+                  )}
+                  {r.flags.length > 0 && (
+                    <div className="mt-0.5 flex flex-wrap gap-1">
+                      {r.flags.map((f) => (
+                        <span
+                          key={f}
+                          className="rounded bg-amber-950 px-1.5 py-0.5 text-[10px] text-amber-300"
+                        >
+                          {FLAG_TEXT[f] ?? f}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </td>
+                <td className="px-2 py-1.5 tabular-nums">{fmt(r.qty)}</td>
+              </>
+            );
+            const endCells = (r: MaterialRowOut) => (
+              <>
+                <td className="px-2 py-1.5 tabular-nums">{fmt(r.total_weight_kg)}</td>
+                <td className="px-2 py-1.5">
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                      STATUS_STYLE[r.status]
+                    }`}
+                  >
+                    {r.status.replace("_", " ")}
+                  </span>
+                </td>
+                <td className="px-2 py-1.5 whitespace-nowrap">
+                  {table.status !== "approved" && (
+                    <>
+                      {r.status === "needs_review" && (
+                        <button
+                          onClick={() => rowAction(r.id, { action: "approve" })}
+                          className="mr-1 rounded bg-emerald-800 px-1.5 py-0.5 text-xs hover:bg-emerald-700"
+                          title="Approve as read"
+                        >
+                          ✓
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setEditing(r.id)}
+                        className="mr-1 rounded bg-zinc-800 px-1.5 py-0.5 text-xs hover:bg-zinc-700"
+                        title="Edit values"
+                      >
+                        ✎
+                      </button>
+                      {r.status !== "rejected" && (
+                        <button
+                          onClick={() => rowAction(r.id, { action: "reject" })}
+                          className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs hover:bg-red-900"
+                          title="Reject row"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </>
+                  )}
+                </td>
+              </>
+            );
+            const renderRows = (rows: MaterialRowOut[], mid: (r: MaterialRowOut) => ReactNode) =>
+              rows.map((r) =>
                 editing === r.id ? (
                   <RowEditor
                     key={r.id}
@@ -302,76 +371,88 @@ export default function TableReviewView({
                   />
                 ) : (
                   <tr key={r.id} className="border-t border-zinc-800/60">
-                    <td className="px-2 py-1.5 text-xs text-zinc-500">
-                      {r.row_index + 1}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <div className="font-medium">{r.material_key ?? "—"}</div>
-                      {r.description && (
-                        <div className="text-xs text-zinc-500">{r.description}</div>
-                      )}
-                      {r.flags.length > 0 && (
-                        <div className="mt-0.5 flex flex-wrap gap-1">
-                          {r.flags.map((f) => (
-                            <span
-                              key={f}
-                              className="rounded bg-amber-950 px-1.5 py-0.5 text-[10px] text-amber-300"
-                            >
-                              {FLAG_TEXT[f] ?? f}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-2 py-1.5 tabular-nums">{fmt(r.qty)}</td>
-                    <td className="px-2 py-1.5 tabular-nums">{fmt(r.unit_length_mm)}</td>
-                    <td className="px-2 py-1.5 tabular-nums">{fmt(r.total_length_mm)}</td>
-                    <td className="px-2 py-1.5 tabular-nums">{fmt(r.total_weight_kg)}</td>
-                    <td className="px-2 py-1.5">
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                          STATUS_STYLE[r.status]
-                        }`}
-                      >
-                        {r.status.replace("_", " ")}
-                      </span>
-                    </td>
-                    <td className="px-2 py-1.5 whitespace-nowrap">
-                      {table.status !== "approved" && (
-                        <>
-                          {r.status === "needs_review" && (
-                            <button
-                              onClick={() => rowAction(r.id, { action: "approve" })}
-                              className="mr-1 rounded bg-emerald-800 px-1.5 py-0.5 text-xs hover:bg-emerald-700"
-                              title="Approve as read"
-                            >
-                              ✓
-                            </button>
-                          )}
-                          <button
-                            onClick={() => setEditing(r.id)}
-                            className="mr-1 rounded bg-zinc-800 px-1.5 py-0.5 text-xs hover:bg-zinc-700"
-                            title="Edit values"
-                          >
-                            ✎
-                          </button>
-                          {r.status !== "rejected" && (
-                            <button
-                              onClick={() => rowAction(r.id, { action: "reject" })}
-                              className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs hover:bg-red-900"
-                              title="Reject row"
-                            >
-                              ✕
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </td>
+                    {startCells(r)}
+                    {mid(r)}
+                    {endCells(r)}
                   </tr>
                 ),
-              )}
-            </tbody>
-          </table>
+              );
+            const th = "px-2 py-1.5 font-normal";
+            return (
+              <>
+                {barRows.length > 0 && (
+                  <div>
+                    <div className="border-b border-zinc-800 bg-zinc-900/60 px-3 py-1.5 text-xs font-medium text-zinc-400">
+                      Bars · {barRows.length}
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-zinc-950 text-left text-xs text-zinc-500">
+                        <tr>
+                          <th className={th}>#</th>
+                          <th className={th}>Material</th>
+                          <th className={th}>Qty</th>
+                          <th className={th}>Unit len mm</th>
+                          <th className={th}>Total len mm</th>
+                          <th className={th}>Weight kg</th>
+                          <th className={th}>Status</th>
+                          <th className={th}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {renderRows(barRows, (r) => (
+                          <>
+                            <td className="px-2 py-1.5 tabular-nums">
+                              {fmt(r.unit_length_mm)}
+                            </td>
+                            <td className="px-2 py-1.5 tabular-nums">
+                              {fmt(r.total_length_mm)}
+                            </td>
+                          </>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {plateRows.length > 0 && (
+                  <div>
+                    <div className="border-b border-t border-zinc-800 bg-zinc-900/60 px-3 py-1.5 text-xs font-medium text-zinc-400">
+                      Plates · {plateRows.length}
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-zinc-950 text-left text-xs text-zinc-500">
+                        <tr>
+                          <th className={th}>#</th>
+                          <th className={th}>Material</th>
+                          <th className={th}>Qty</th>
+                          <th className={th}>W×H mm</th>
+                          <th className={th}>THK mm</th>
+                          <th className={th}>Area m²</th>
+                          <th className={th}>Weight kg</th>
+                          <th className={th}>Status</th>
+                          <th className={th}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {renderRows(plateRows, (r) => (
+                          <>
+                            <td className="px-2 py-1.5 tabular-nums">
+                              {r.width_mm != null && r.height_mm != null
+                                ? `${r.width_mm}×${r.height_mm}`
+                                : "—"}
+                            </td>
+                            <td className="px-2 py-1.5 tabular-nums">{fmt(r.thk_mm)}</td>
+                            <td className="px-2 py-1.5 tabular-nums">
+                              {r.area_m2 != null ? `${r.area_m2}` : "—"}
+                            </td>
+                          </>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
     </div>

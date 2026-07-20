@@ -217,6 +217,11 @@ export interface MaterialRowOut {
   total_length_mm: number | null;
   unit_weight_kg: number | null;
   total_weight_kg: number | null;
+  // plate readings (mixed BOMs reuse the length columns for W×H / total area)
+  width_mm: number | null;
+  height_mm: number | null;
+  area_m2: number | null;
+  thk_mm: number | null;
   flags: string[];
   confidence: number;
   status: RowStatus;
@@ -256,6 +261,7 @@ export interface SummaryRow {
   qty: number;
   total_length_mm: number;
   total_weight_kg: number;
+  total_area_m2: number; // plates; 0 for bars
   lengths: { unit_length_mm: number; qty: number }[];
   documents: string[];
   projects: string[];

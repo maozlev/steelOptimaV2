@@ -37,7 +37,10 @@ from app.tables.grid import TableGrid, detect_grids
 from app.tables.normalize import (
     canonical_material_key,
     fix_homoglyphs,
+    parse_area,
     parse_number,
+    parse_plate,
+    parse_thk,
     to_mm,
 )
 from app.tables.regions import render_region
@@ -94,10 +97,19 @@ def _record_vlm_call(
 def _normalized_fields(
     values: dict[str, str | None], length_unit: str
 ) -> dict[str, float | None]:
-    """Column-role texts -> normalized numbers in mm/kg."""
+    """Column-role texts -> normalized numbers in mm/kg.
+
+    Plate rows in a mixed BOM reuse the length columns for other quantities:
+    unit_length holds W×H ("890x185") and total_length holds a total area
+    ("0.6495 m²"). parse_number refuses both, so when it does, the plate parsers
+    get a shot — the readings land in width/height/area/thk fields instead of
+    being stranded in cells_json. Length fields stay None for plates: a plate has
+    no cut length, and Orders/Summary already treat it as flat qty."""
     qty = parse_number(values.get("qty"))
     unit_len = parse_number(values.get("unit_length"))
     total_len = parse_number(values.get("total_length"))
+    plate = parse_plate(values.get("unit_length")) if unit_len is None else None
+    area = parse_area(values.get("total_length")) if total_len is None else None
     return {
         "qty": qty,
         "unit_length_mm": to_mm(unit_len, length_unit) if unit_len is not None else None,
@@ -106,6 +118,10 @@ def _normalized_fields(
         ),
         "unit_weight_kg": parse_number(values.get("unit_weight")),
         "total_weight_kg": parse_number(values.get("total_weight")),
+        "width_mm": plate[0] if plate else None,
+        "height_mm": plate[1] if plate else None,
+        "area_m2": area,
+        "thk_mm": parse_thk(values.get("description")),
     }
 
 
@@ -379,6 +395,10 @@ def _process_table(
                 total_length_mm=fields["total_length_mm"],
                 unit_weight_kg=fields["unit_weight_kg"],
                 total_weight_kg=fields["total_weight_kg"],
+                width_mm=fields["width_mm"],
+                height_mm=fields["height_mm"],
+                area_m2=fields["area_m2"],
+                thk_mm=fields["thk_mm"],
                 flags_json=json.dumps(validation.flags),
                 confidence=confidence,
                 status=status,

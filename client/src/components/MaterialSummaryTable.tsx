@@ -211,9 +211,13 @@ export default function MaterialSummaryTable({
                         {v.weight_kg.toFixed(1)}
                       </td>
                       <td className="px-2 py-1.5 text-xs text-zinc-400">
+                        {/* bars list cut lengths; plates have none — show total area */}
                         {r.lengths
                           .map((l) => `${l.qty}×${l.unit_length_mm}`)
-                          .join(", ") || "—"}
+                          .join(", ") ||
+                          (r.total_area_m2 > 0
+                            ? `${r.total_area_m2.toFixed(2)} m²`
+                            : "—")}
                       </td>
                       <td
                         className="max-w-64 px-2 py-1.5 text-xs text-zinc-500"

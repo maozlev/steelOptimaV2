@@ -49,6 +49,7 @@ def project_summary(db: Session, project_ids: list[int]) -> dict:
                 "qty": 0.0,
                 "total_length_mm": 0.0,
                 "total_weight_kg": 0.0,
+                "total_area_m2": 0.0,  # plates; stays 0 for bars
                 "lengths": Counter(),  # unit_length_mm -> qty
                 "documents": set(),
                 "projects": set(),
@@ -66,6 +67,8 @@ def project_summary(db: Session, project_ids: list[int]) -> dict:
             g["total_length_mm"] += length
         if row.total_weight_kg:
             g["total_weight_kg"] += row.total_weight_kg
+        if row.area_m2:
+            g["total_area_m2"] += row.area_m2
         if row.unit_length_mm and qty:
             g["lengths"][row.unit_length_mm] += int(qty)
         g["documents"].add(doc.filename)
@@ -85,6 +88,7 @@ def project_summary(db: Session, project_ids: list[int]) -> dict:
                 "qty": g["qty"],
                 "total_length_mm": round(g["total_length_mm"], 1),
                 "total_weight_kg": round(g["total_weight_kg"], 2),
+                "total_area_m2": round(g["total_area_m2"], 4),
                 "lengths": [
                     {"unit_length_mm": length, "qty": qty}
                     for length, qty in sorted(g["lengths"].items())

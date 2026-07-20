@@ -208,6 +208,14 @@ class MaterialRow(Base):
     total_length_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
     unit_weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
     total_weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # plates: a mixed BOM reuses the length columns for W×H ("890x185") and total
+    # area ("0.6495 m²"), which parse_number rightly refuses — these fields hold
+    # the plate reading so the data isn't stranded in cells_json (and area×THK×
+    # density validates against the weight column; see validate.py)
+    width_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    height_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    area_m2: Mapped[float | None] = mapped_column(Float, nullable=True)
+    thk_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
     flags_json: Mapped[str] = mapped_column(Text, default="[]")
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     status: Mapped[str] = mapped_column(RowStatus, default="needs_review")

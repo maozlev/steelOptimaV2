@@ -12,6 +12,10 @@ from dataclasses import dataclass, field
 
 REL_TOL = 0.005  # printed totals are rounded to 0.1 — half a percent covers that
 QTY_INT_TOL = 1e-6
+STEEL_DENSITY_KG_M3 = 7850.0
+# a printed weight rounded to 0.1 kg can be off by 0.05 on its own; give the
+# plate check the same slack on top of the relative tolerance
+PLATE_WEIGHT_ABS_TOL_KG = 0.06
 
 
 @dataclass
@@ -69,6 +73,29 @@ def validate_row(fields: dict[str, float | None], roles: list[str]) -> RowValida
             v.checks_passed += 2
         else:
             v.flags.append("qty_x_unit_weight_mismatch")
+
+    # plates: the area column is the row's checksum the way qty×unit_len is for
+    # bars — total area × thickness × steel density must equal the weight column.
+    # (Verified exact on every plate of the NCD BOM: 0.3915×0.014×7850 = 43.0.)
+    # A non-steel plate would flag here — a click, per the flagging philosophy.
+    area = fields.get("area_m2")
+    thk = fields.get("thk_mm")
+    width = fields.get("width_mm")
+    height = fields.get("height_mm")
+    if area and thk and total_w:
+        expected = area * (thk / 1000.0) * STEEL_DENSITY_KG_M3
+        if abs(expected - total_w) <= max(
+            REL_TOL * max(expected, total_w), PLATE_WEIGHT_ABS_TOL_KG
+        ):
+            v.checks_passed += 2
+        else:
+            v.flags.append("area_x_thk_weight_mismatch")
+
+    # sanity bound: qty rectangles is the most area the row can claim (shaped
+    # plates come in under it; over it means a misread)
+    if area and qty and width and height:
+        if area > qty * (width / 1000.0) * (height / 1000.0) * (1 + REL_TOL):
+            v.flags.append("area_exceeds_qty_x_bounding_rect")
 
     return v
 

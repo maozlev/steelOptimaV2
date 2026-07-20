@@ -71,6 +71,29 @@ def to_mm(value: float, unit: str) -> float:
     return value * UNIT_TO_MM.get(unit, 1.0)
 
 
+_AREA_RE = re.compile(r"^(\d+(?:[.,]\d+)?)\s*m²$")
+
+
+def parse_area(raw: str | None) -> float | None:
+    """'0.6495 m²' / '0.6495 m2' -> 0.6495; anything else -> None."""
+    if not raw:
+        return None
+    m = _AREA_RE.match(fix_homoglyphs(raw).strip())
+    if not m:
+        return None
+    return parse_number(m.group(1))
+
+
+def parse_thk(text: str | None) -> float | None:
+    """'Connection Plate THK 14 mm' -> 14.0; no THK marker -> None."""
+    if not text:
+        return None
+    m = _THK_RE.search(fix_homoglyphs(text))
+    if not m:
+        return None
+    return parse_number(m.group(1))
+
+
 def parse_plate(raw: str | None) -> tuple[float, float] | None:
     """'450x174' -> (450.0, 174.0); anything else -> None."""
     if not raw:

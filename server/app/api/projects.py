@@ -95,12 +95,18 @@ def _doc_stats(db: Session, doc_ids: list[int], project_kind: str) -> dict[int, 
             .group_by(Page.document_id)
         ):
             stats[doc_id]["table_count"] = count
+        # only a materials table the operator still has to review counts as
+        # "to review": flagged rows in coordinates/other tables (or a rejected
+        # one) are not the material BOM and must not raise the badge.
         for doc_id, count in (
             db.query(Page.document_id, func.count(MaterialRow.id))
             .join(MaterialTable, MaterialTable.page_id == Page.id)
             .join(MaterialRow, MaterialRow.table_id == MaterialTable.id)
             .filter(
-                Page.document_id.in_(doc_ids), MaterialRow.status == "needs_review"
+                Page.document_id.in_(doc_ids),
+                MaterialRow.status == "needs_review",
+                MaterialTable.kind == "materials",
+                MaterialTable.status != "rejected",
             )
             .group_by(Page.document_id)
         ):

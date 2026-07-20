@@ -22,6 +22,11 @@ class MaterialRowOut(BaseModel):
     total_length_mm: float | None
     unit_weight_kg: float | None
     total_weight_kg: float | None
+    # plate readings (mixed BOMs reuse the length columns for W×H / total area)
+    width_mm: float | None = None
+    height_mm: float | None = None
+    area_m2: float | None = None
+    thk_mm: float | None = None
     flags: list = Field(default=[], validation_alias="flags_json")
     confidence: float
     status: str
