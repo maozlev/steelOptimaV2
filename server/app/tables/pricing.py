@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.db.models import MaterialPrice
 from app.tables.aggregate import project_summary
 
-PRICING_UNITS = ("per_kg", "per_m", "per_unit")
+PRICING_UNITS = ("per_kg", "per_m", "per_unit", "per_m2")
 
 
 def upsert_prices(db: Session, project_id: int | None, entries: list[dict]) -> int:
@@ -69,6 +69,7 @@ def compute_bid(db: Session, project_ids: list[int]) -> dict:
                 "per_kg": row["total_weight_kg"],
                 "per_m": row["total_length_mm"] / 1000.0,
                 "per_unit": row["qty"],
+                "per_m2": row["total_area_m2"],  # plates; 0 for bars — visibly wrong, not silently
             }[price_row.pricing_unit]
             line["line_total"] = round(basis * price_row.price, 2)
             total += line["line_total"]

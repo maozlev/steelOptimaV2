@@ -8,6 +8,7 @@ const UNIT_LABEL: Record<PricingUnit, string> = {
   per_kg: "₪ / kg",
   per_m: "₪ / m",
   per_unit: "₪ / unit",
+  per_m2: "₪ / m²",
 };
 
 export default function BidPanel({
@@ -172,7 +173,9 @@ export default function BidPanel({
           <tr>
             <th className="px-2 py-1.5 font-normal">Material</th>
             <th className="px-2 py-1.5 text-right font-normal">Qty</th>
-            <th className="px-2 py-1.5 text-right font-normal">Length m</th>
+            <th className="px-2 py-1.5 text-right font-normal" title="Bars: total length m · Plates: total area m²">
+              Length m / Area
+            </th>
             <th className="px-2 py-1.5 text-right font-normal">Weight kg</th>
             <th className="px-2 py-1.5 font-normal">Price</th>
             <th className="px-2 py-1.5 font-normal">Unit</th>
@@ -202,7 +205,12 @@ export default function BidPanel({
                 </td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{qty}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">
-                  {((r.total_length_mm / 1000) * factor).toFixed(1)}
+                  {/* plates have no length — show their area, not a fake 0.0 */}
+                  {r.lengths.length > 0
+                    ? ((r.total_length_mm / 1000) * factor).toFixed(1)
+                    : r.total_area_m2 > 0
+                      ? `${(r.total_area_m2 * factor).toFixed(2)} m²`
+                      : "—"}
                 </td>
                 <td className="px-2 py-1.5 text-right tabular-nums">
                   {(r.total_weight_kg * factor).toFixed(1)}

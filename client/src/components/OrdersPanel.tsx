@@ -381,6 +381,58 @@ function MaterialOrderCard({
   );
 }
 
+// "PLATE-16-890X185" -> { thk: 16, w: 890, h: 185 } — the key is the only place
+// the summary carries plate geometry (per-row dims live on MaterialRow)
+function parsePlateKey(key: string): { thk: number; w: number; h: number } | null {
+  const m = /^PLATE-(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)$/.exec(key);
+  return m ? { thk: Number(m[1]), w: Number(m[2]), h: Number(m[3]) } : null;
+}
+
+// Demand card for a plate material: what to order, by count and area. No 2D
+// nesting yet — this shows the demand the future sheet optimizer will consume.
+function PlateOrderCard({
+  material,
+  applyInventory,
+}: {
+  material: SummaryRow;
+  applyInventory: boolean;
+}) {
+  const nd = applyInventory ? netDemand(material) : null;
+  const qty = nd ? nd.netQty : material.qty;
+  const factor = nd ? nd.factor : 1;
+  const area = material.total_area_m2 * factor;
+  const dims = parsePlateKey(material.material_key);
+  return (
+    <div className="rounded border border-zinc-800 p-4">
+      <div className="mb-2 flex items-baseline justify-between gap-3">
+        <h3 className="flex items-center gap-2 font-medium">
+          {material.material_key}
+          <span className="rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] font-normal text-sky-300">
+            plate
+          </span>
+          {applyInventory && (
+            <span className="rounded bg-emerald-900/60 px-1.5 py-0.5 text-[10px] font-normal text-emerald-300">
+              net of stock
+            </span>
+          )}
+        </h3>
+        <span className="text-right text-xs text-zinc-500">
+          {qty > 0
+            ? `order ${qty} pcs${dims ? ` · ${dims.w}×${dims.h}×${dims.thk} mm` : ""}${
+                area > 0 ? ` · ${area.toFixed(2)} m²` : ""
+              }`
+            : "fully in stock"}
+        </span>
+      </div>
+      <p className="text-xs text-zinc-500">
+        Plates are ordered by piece and cut from stock sheets — 2D sheet nesting
+        (which sheet sizes to buy, how to lay the plates out) is not built yet.
+        Until then, this line is the demand: quantity, size and total area.
+      </p>
+    </div>
+  );
+}
+
 export default function OrdersPanel({
   projectId,
   summary,
@@ -396,6 +448,9 @@ export default function OrdersPanel({
   const seeded = useRef(false);
 
   const materials = (summary?.rows ?? []).filter((r) => r.lengths.length > 0);
+  const plates = (summary?.rows ?? []).filter(
+    (r) => r.lengths.length === 0 && r.total_area_m2 > 0,
+  );
 
   const refreshHistory = useCallback(
     () =>
@@ -491,16 +546,17 @@ export default function OrdersPanel({
             Export bars order (CSV)
           </button>
         </div>
-        {materials.length === 0 ? (
+        {materials.length === 0 && plates.length === 0 ? (
           <div className="text-sm text-zinc-500">
             No approved materials with cut lengths yet.
           </div>
         ) : (
           <div className="flex flex-wrap gap-x-6 gap-y-2">
-            {materials.map((m) => {
+            {[...materials, ...plates].map((m) => {
               const ordered = history.some(
                 (h) => h.params.material_key === m.material_key,
               );
+              const isPlate = m.lengths.length === 0;
               return (
                 <label
                   key={m.material_key}
@@ -512,6 +568,11 @@ export default function OrdersPanel({
                     onChange={() => toggle(m.material_key)}
                   />
                   {m.material_key}
+                  {isPlate && (
+                    <span className="rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] text-sky-300">
+                      plate
+                    </span>
+                  )}
                   {ordered && (
                     <span className="rounded bg-emerald-900/60 px-1.5 py-0.5 text-[10px] text-emerald-300">
                       ordered
@@ -536,6 +597,16 @@ export default function OrdersPanel({
           onChange={refreshHistory}
         />
       ))}
+
+      {plates
+        .filter((m) => checked.has(m.material_key))
+        .map((m) => (
+          <PlateOrderCard
+            key={m.material_key}
+            material={m}
+            applyInventory={applyInventory}
+          />
+        ))}
     </div>
   );
 }

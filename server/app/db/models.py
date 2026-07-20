@@ -24,7 +24,7 @@ TableStatus = Enum("pending", "approved", "rejected", name="table_status")
 RowStatus = Enum(
     "auto_approved", "needs_review", "approved", "rejected", "edited", name="row_status"
 )
-PricingUnit = Enum("per_kg", "per_m", "per_unit", name="pricing_unit")
+PricingUnit = Enum("per_kg", "per_m", "per_unit", "per_m2", name="pricing_unit")
 ChatScope = Enum("document", "project", "summary", name="chat_scope")
 ChatRole = Enum("user", "assistant", name="chat_role")
 

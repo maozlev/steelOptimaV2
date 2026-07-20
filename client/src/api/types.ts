@@ -275,7 +275,7 @@ export interface ProjectSummary {
   unreviewed: { pending_tables: number; needs_review_rows: number };
 }
 
-export type PricingUnit = "per_kg" | "per_m" | "per_unit";
+export type PricingUnit = "per_kg" | "per_m" | "per_unit" | "per_m2";
 
 export interface PriceEntry {
   material_key: string;

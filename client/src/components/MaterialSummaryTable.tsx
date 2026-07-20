@@ -57,6 +57,7 @@ function rowValues(r: SummaryRow, applyInventory: boolean) {
       toOrder: r.qty,
       length_mm: r.total_length_mm,
       weight_kg: r.total_weight_kg,
+      area_m2: r.total_area_m2,
     };
   }
   const nd = netDemand(r);
@@ -66,6 +67,7 @@ function rowValues(r: SummaryRow, applyInventory: boolean) {
     toOrder: nd.netQty,
     length_mm: r.total_length_mm * nd.factor,
     weight_kg: r.total_weight_kg * nd.factor,
+    area_m2: r.total_area_m2 * nd.factor, // total area is linear in qty too
   };
 }
 
@@ -134,7 +136,9 @@ export default function MaterialSummaryTable({
             )}
             <th className="px-2 py-1.5 text-right font-normal">Length m</th>
             <th className="px-2 py-1.5 text-right font-normal">Weight kg</th>
-            <th className="px-2 py-1.5 font-normal">Cut lengths</th>
+            <th className="px-2 py-1.5 font-normal" title="Bars: qty×length mm · Plates: total area m²">
+              Cut lengths / Area
+            </th>
             <th className="px-2 py-1.5 font-normal">
               {showProjects ? "Projects" : "Documents"}
             </th>
@@ -155,9 +159,10 @@ export default function MaterialSummaryTable({
                   toOrder: a.toOrder + v.toOrder,
                   length_mm: a.length_mm + v.length_mm,
                   weight_kg: a.weight_kg + v.weight_kg,
+                  area_m2: a.area_m2 + v.area_m2,
                 };
               },
-              { qty: 0, inStock: 0, toOrder: 0, length_mm: 0, weight_kg: 0 },
+              { qty: 0, inStock: 0, toOrder: 0, length_mm: 0, weight_kg: 0, area_m2: 0 },
             );
             return (
               <Fragment key={cat}>
@@ -205,19 +210,20 @@ export default function MaterialSummaryTable({
                         </>
                       )}
                       <td className="px-2 py-1.5 text-right tabular-nums">
-                        {(v.length_mm / 1000).toFixed(1)}
+                        {/* a plate has no cut length — 0.0 would read as data */}
+                        {r.lengths.length > 0
+                          ? (v.length_mm / 1000).toFixed(1)
+                          : "—"}
                       </td>
                       <td className="px-2 py-1.5 text-right tabular-nums">
                         {v.weight_kg.toFixed(1)}
                       </td>
                       <td className="px-2 py-1.5 text-xs text-zinc-400">
-                        {/* bars list cut lengths; plates have none — show total area */}
+                        {/* bars list cut lengths; plates show total area */}
                         {r.lengths
                           .map((l) => `${l.qty}×${l.unit_length_mm}`)
                           .join(", ") ||
-                          (r.total_area_m2 > 0
-                            ? `${r.total_area_m2.toFixed(2)} m²`
-                            : "—")}
+                          (v.area_m2 > 0 ? `${v.area_m2.toFixed(2)} m²` : "—")}
                       </td>
                       <td
                         className="max-w-64 px-2 py-1.5 text-xs text-zinc-500"
@@ -250,12 +256,15 @@ export default function MaterialSummaryTable({
                     </>
                   )}
                   <td className="px-2 py-1 text-right tabular-nums">
-                    {(sub.length_mm / 1000).toFixed(1)}
+                    {sub.length_mm > 0 ? (sub.length_mm / 1000).toFixed(1) : "—"}
                   </td>
                   <td className="px-2 py-1 text-right tabular-nums">
                     {sub.weight_kg.toFixed(1)}
                   </td>
-                  <td colSpan={2}></td>
+                  <td className="px-2 py-1 text-xs">
+                    {sub.area_m2 > 0 ? `${sub.area_m2.toFixed(2)} m²` : ""}
+                  </td>
+                  <td></td>
                 </tr>
               </Fragment>
             );
