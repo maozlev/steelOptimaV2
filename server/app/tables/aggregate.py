@@ -96,11 +96,16 @@ def project_summary(db: Session, project_ids: list[int]) -> dict:
         )
 
     # what is NOT in the numbers above — the summary must never look complete
-    # while work is still pending
+    # while a real material table is still pending. Only "materials" tables count:
+    # the operator has chosen to review those alone, so "unknown"/"other" grids
+    # (title-block fragments, fastener schedules, stray rulings) are neither
+    # surfaced for review nor allowed to hold the summary open. Trade-off: a
+    # materials table misclassified as "unknown" is silently excluded — the price
+    # of a review queue that only ever shows real material tables.
     pending_tables = (
         base.filter(
             MaterialTable.status == "pending",
-            MaterialTable.kind.in_(["materials", "unknown"]),
+            MaterialTable.kind == "materials",
         )
         .with_entities(func.count(func.distinct(MaterialTable.id)))
         .scalar()
@@ -108,6 +113,7 @@ def project_summary(db: Session, project_ids: list[int]) -> dict:
     )
     flagged_rows = base.filter(
         MaterialTable.status != "rejected",
+        MaterialTable.kind == "materials",
         MaterialRow.status == "needs_review",
     ).count()
 

@@ -221,7 +221,10 @@ export default function BidPanel({
                 </td>
                 <td className="px-2 py-1.5">
                   <select
-                    value={draft?.pricing_unit ?? r.pricing_unit ?? ""}
+                    // fall back to the global unit, not "" — so the top-of-panel
+                    // dropdown visibly sets the unit on every line (even unpriced
+                    // ones) without a draft that would fake a price of 0
+                    value={draft?.pricing_unit ?? r.pricing_unit ?? defaultUnit}
                     onChange={(e) =>
                       setDraft(r.material_key, {
                         pricing_unit: e.target.value as PricingUnit,
@@ -229,9 +232,6 @@ export default function BidPanel({
                     }
                     className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
                   >
-                    <option value="" disabled>
-                      unit…
-                    </option>
                     {(Object.keys(UNIT_LABEL) as PricingUnit[]).map((u) => (
                       <option key={u} value={u}>
                         {UNIT_LABEL[u]}

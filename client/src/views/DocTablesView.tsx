@@ -70,13 +70,26 @@ export default function DocTablesView({
     return <div className="p-8 text-sm text-zinc-500">{error ?? "Loading…"}</div>;
   }
 
+  // Only material tables reach review — the operator approves those alone.
+  // "unknown"/"other" grids (title-block fragments, fastener schedules, stray
+  // rulings) are kept in the DB but not surfaced; a muted count keeps their
+  // exclusion honest rather than silent.
+  const reviewable = tables.filter((t) => t.kind === "materials");
+  const hidden = tables.length - reviewable.length;
+
   return (
     <div className="mx-auto flex h-full max-w-4xl flex-col gap-4 p-8">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{doc.filename}</h1>
           <p className="text-sm text-zinc-400">
-            Material tables · {tables.length} found
+            Material tables · {reviewable.length} found
+            {hidden > 0 && (
+              <span className="text-zinc-600">
+                {" "}
+                · {hidden} non-material {hidden === 1 ? "grid" : "grids"} hidden
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -110,15 +123,17 @@ export default function DocTablesView({
       )}
 
       <div className="flex-1 overflow-auto">
-        {tables.length === 0 ? (
+        {reviewable.length === 0 ? (
           <p className="mt-8 text-center text-sm text-zinc-500">
             {scanning
               ? "Scanning for material tables…"
-              : "No tables detected in this document — rescan, or open the drawing instead."}
+              : hidden > 0
+                ? `No material tables in this document — ${hidden} non-material ${hidden === 1 ? "grid was" : "grids were"} detected and set aside. Rescan, or open the drawing instead.`
+                : "No tables detected in this document — rescan, or open the drawing instead."}
           </p>
         ) : (
           <ul className="divide-y divide-zinc-800 rounded border border-zinc-800">
-            {tables.map((t) => (
+            {reviewable.map((t) => (
               <li key={t.id} className="flex items-center">
                 <button
                   onClick={() => onOpenTable(t.id)}

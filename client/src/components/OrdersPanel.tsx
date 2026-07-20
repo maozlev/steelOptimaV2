@@ -101,7 +101,7 @@ function makeColorFor(bars: { cuts: number[] }[]): (length: number) => string {
   return (len) => `hsl(${hue.get(len) ?? 0}, 60%, 42%)`;
 }
 
-function OrderResult({ shown }: { shown: OrderPlanOut }) {
+export function OrderResult({ shown }: { shown: OrderPlanOut }) {
   const colorFor = makeColorFor(shown.result.bars);
   return (
     <div className="mt-3 border-t border-zinc-800 pt-3">

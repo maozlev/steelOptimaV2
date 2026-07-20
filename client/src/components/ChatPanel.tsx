@@ -21,7 +21,7 @@ const ACTION_RE = /\[\[ACTION\]\]\s*([\s\S]*?)\s*\[\[\/ACTION\]\]/g;
 const TOOLS_BLOCK = `[[TOOLS]]
 You may CHANGE data when the user explicitly asks. To act, end your answer with one block per action:
 [[ACTION]]{"type":"set_price","material_key":"L60X60X6","price":12,"pricing_unit":"per_kg"}[[/ACTION]]
-Types: set_price{material_key,price,pricing_unit:per_kg|per_m|per_unit} · approve_table{table_id} · reject_table{table_id} · reopen_table{table_id} · create_order{material_key,stock:[{length_mm,price}],kerf_mm?} · start_scan{document_id} · delete_document{document_id} · switch_tab{tab:documents|tables|summary|bid|orders|inventory} · set_inventory_mode{on:true|false}
+Types: set_price{material_key,price,pricing_unit:per_kg|per_m|per_unit} · set_inventory{material_key,qty,unit_length_mm?} (in-stock qty; unit_length_mm only for a bar with several lengths — the context lists each material's stock[len:qty]) · approve_table{table_id} · reject_table{table_id} · reopen_table{table_id} · create_order{material_key,stock:[{length_mm,price}],kerf_mm?} · start_scan{document_id} · delete_document{document_id} · switch_tab{tab:documents|tables|summary|bid|orders|inventory} · set_inventory_mode{on:true|false}
 Strict JSON inside blocks. Never act unasked.
 [[/TOOLS]]`;
 
@@ -31,6 +31,7 @@ export default function ChatPanel({
   hint,
   screenContext,
   onAction,
+  toolsBlock,
 }: {
   scope: ChatScope;
   scopeId: number;
@@ -38,6 +39,8 @@ export default function ChatPanel({
   screenContext?: () => string;
   /** Execute one agent-emitted action; return a short human summary. */
   onAction?: (action: Record<string, unknown>) => Promise<string>;
+  /** Override the default action menu sent to the model (planning tab). */
+  toolsBlock?: string;
 }) {
   type PendingAction = {
     key: number;
@@ -83,7 +86,7 @@ export default function ChatPanel({
     const ctx = screenContext?.();
     const outgoing =
       (ctx ? `[[SCREEN]]\nOn screen now:\n${ctx}\n[[/SCREEN]]\n` : "") +
-      (onAction ? `${TOOLS_BLOCK}\n` : "") +
+      (onAction ? `${toolsBlock ?? TOOLS_BLOCK}\n` : "") +
       content;
     try {
       const full = await sendChatMessage(
@@ -129,7 +132,7 @@ export default function ChatPanel({
       setStreaming(null);
       setBusy(false);
     }
-  }, [draft, busy, scope, scopeId, screenContext, onAction]);
+  }, [draft, busy, scope, scopeId, screenContext, onAction, toolsBlock]);
 
   const clear = useCallback(() => {
     api

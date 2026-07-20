@@ -71,8 +71,9 @@ def test_review_and_approve_flow(client, ncd_table):
     assert r.json()["status"] == "approved"
 
     summary = client.get(f"/api/projects/{project_id}/summary").json()
-    # the approved BOM left the pending pool; the sheet's junk grids (title
-    # block fragments, "unknown" offline) honestly remain in it
+    # the approved BOM left the pending pool. Only "materials" tables count as
+    # pending, so junk grids ("unknown"/"other") never inflated it in the first
+    # place — approving the sheet's one materials table empties the queue.
     assert summary["unreviewed"]["pending_tables"] == pending_before - 1
     keys = {row["material_key"] for row in summary["rows"]}
     assert "L160X160X15" in keys

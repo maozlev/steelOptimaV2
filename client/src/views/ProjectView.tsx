@@ -13,9 +13,10 @@ import MaterialSummaryTable, {
   exportSummaryCsv,
 } from "../components/MaterialSummaryTable";
 import OrdersPanel from "../components/OrdersPanel";
+import PlanningPanel from "../components/PlanningPanel";
 import QueuePanel from "../components/QueuePanel";
 import UploadDropzone from "../components/UploadDropzone";
-import { netDemand } from "../mockInventory";
+import { MOCK_INVENTORY, netDemand, setInventoryStock } from "../mockInventory";
 import { readViewContext, setViewSection } from "../viewContext";
 
 const JOB_LABEL: Record<string, string> = {
@@ -25,7 +26,14 @@ const JOB_LABEL: Record<string, string> = {
   failed: "FAILED",
 };
 
-type Tab = "documents" | "tables" | "summary" | "bid" | "orders" | "inventory";
+type Tab =
+  | "documents"
+  | "tables"
+  | "summary"
+  | "bid"
+  | "orders"
+  | "inventory"
+  | "planning";
 
 const KIND_STYLE: Record<string, string> = {
   materials: "bg-emerald-900/60 text-emerald-300",
@@ -34,11 +42,15 @@ const KIND_STYLE: Record<string, string> = {
   unknown: "bg-amber-900/60 text-amber-300",
 };
 
-// The Tables tab shows only settled tables: approved outright, or scanned clean
-// with nothing left to review. Rejected ("ignored") tables and any table still
-// carrying flagged rows are hidden here — they belong in the per-document review.
+// The Tables tab shows only settled MATERIAL tables: approved outright, or
+// scanned clean with nothing left to review. "unknown"/"other" grids, rejected
+// tables, and anything still carrying flagged rows are hidden here — non-material
+// grids never enter review at all, the rest belong in the per-document review.
 const isReadyTable = (t: MaterialTableOut) =>
-  t.status !== "rejected" && t.needs_review_rows === 0 && t.row_count > 0;
+  t.kind === "materials" &&
+  t.status !== "rejected" &&
+  t.needs_review_rows === 0 &&
+  t.row_count > 0;
 
 export default function ProjectView({
   projectId,
@@ -183,11 +195,40 @@ export default function ProjectView({
         case "set_inventory_mode":
           setApplyInventory(Boolean(a.on));
           return `inventory mode ${a.on ? "on" : "off"}`;
+        case "set_inventory": {
+          const key = String(a.material_key);
+          const qty = Number(a.qty);
+          if (Number.isNaN(qty) || qty < 0)
+            throw new Error("set_inventory needs a qty ≥ 0");
+          const row = summary?.rows.find((r) => r.material_key === key);
+          let len = a.unit_length_mm != null ? Number(a.unit_length_mm) : undefined;
+          if (row && row.lengths.length > 0) {
+            if (len == null) {
+              // no length given: unambiguous if demand has one length, or if
+              // stock exists at exactly one length — "change the stock" can
+              // only mean that one
+              const stocked = Object.entries(
+                MOCK_INVENTORY[key]?.byLength ?? {},
+              ).filter(([, q]) => q > 0);
+              if (row.lengths.length === 1) len = row.lengths[0].unit_length_mm;
+              else if (stocked.length === 1) len = Number(stocked[0][0]);
+              else
+                throw new Error(
+                  `${key} has ${row.lengths.length} lengths and stock at ${stocked.length} of them — say which unit_length_mm`,
+                );
+            } else if (!row.lengths.some((l) => l.unit_length_mm === len)) {
+              throw new Error(`${key} has no ${len}mm length`);
+            }
+          }
+          setInventoryStock(key, { unit_length_mm: len, qty });
+          changed();
+          return `inventory: ${key}${len ? ` @${len}mm` : ""} → ${qty} in stock`;
+        }
         default:
           throw new Error(`unknown action type: ${String(a.type)}`);
       }
     },
-    [projectId, refresh, loadSummary],
+    [projectId, refresh, loadSummary, summary],
   );
 
   // Publish what this screen is showing, so the assistant dock answers about
@@ -215,8 +256,14 @@ export default function ProjectView({
       for (const r of rows) {
         if (applyInventory) {
           const nd = netDemand(r);
+          const inv = MOCK_INVENTORY[r.material_key];
+          const stockDetail = inv?.byLength
+            ? ` stock[${Object.entries(inv.byLength)
+                .map(([l, q]) => `${l}mm:${q}`)
+                .join(",")}]`
+            : "";
           lines.push(
-            `${r.material_key} need${r.qty} stock${nd.inStockQty} order${nd.netQty} ${(r.total_weight_kg * nd.factor).toFixed(0)}kg`,
+            `${r.material_key} need${r.qty} stock${nd.inStockQty} order${nd.netQty} ${(r.total_weight_kg * nd.factor).toFixed(0)}kg${stockDetail}`,
           );
         } else {
           lines.push(
@@ -321,6 +368,7 @@ export default function ProjectView({
         {!isCutouts && tabButton("bid", "💰 Bid")}
         {!isCutouts && tabButton("orders", "✂ Orders")}
         {!isCutouts && tabButton("inventory", "📦 Inventory")}
+        {!isCutouts && tabButton("planning", "🧩 Planning")}
       </nav>
 
       {error && (
@@ -587,12 +635,18 @@ export default function ProjectView({
         )}
 
         {tab === "inventory" && <InventoryPanel />}
+
+        {tab === "planning" && (
+          <PlanningPanel projectId={projectId} onGlobalAction={runAgentAction} />
+        )}
       </div>
         </div>
       </div>
 
-      {/* the assistant dock: always there, always knows what's on screen */}
+      {/* the assistant dock: always there, always knows what's on screen —
+          except on Planning, which has its own conversation front and center */}
       {!isCutouts &&
+        tab !== "planning" &&
         (dockOpen ? (
           <aside className="flex w-96 shrink-0 flex-col border-l border-zinc-800 bg-zinc-950">
             <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
