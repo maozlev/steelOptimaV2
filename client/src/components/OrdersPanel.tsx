@@ -1,33 +1,85 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { OrderPlanOut, ProjectSummary, SummaryRow } from "../api/types";
+import { netDemand } from "../mockInventory";
 
 interface StockDraft {
   length_mm: string;
   price: string;
 }
 
+function csvEscape(v: string | number): string {
+  const s = String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// Order-independent fingerprint of a piece list, so we can tell whether a stored
+// plan was optimized against the same quantities the material needs right now.
+function piecesSig(pieces: { length_mm: number; qty: number }[]): string {
+  return pieces
+    .map((p) => `${p.length_mm}:${p.qty}`)
+    .sort()
+    .join("|");
+}
+
+// One CSV for the whole bars order: every material's buy list and per-bar cut
+// layout in two labelled sections, a material_key column telling them apart.
+function exportOrdersCsv(plans: OrderPlanOut[]) {
+  const keyOf = (p: OrderPlanOut) => p.params.material_key ?? "order";
+  const lines: string[] = [];
+
+  lines.push("BUY");
+  lines.push("material_key,stock_length_mm,bars,unit_price,subtotal");
+  let grand = 0;
+  for (const p of plans) {
+    for (const o of p.result.order) {
+      lines.push(
+        [csvEscape(keyOf(p)), o.stock_length_mm, o.count, o.unit_price, o.subtotal].join(","),
+      );
+    }
+    grand += p.result.total_cost;
+  }
+  lines.push(["", "", "", "total", Math.round(grand * 100) / 100].join(","));
+
+  lines.push("");
+  lines.push("CUT LAYOUT");
+  lines.push("material_key,bar,stock_length_mm,cuts_mm,waste_mm");
+  for (const p of plans) {
+    p.result.bars.forEach((b, i) => {
+      lines.push(
+        [csvEscape(keyOf(p)), i + 1, b.stock_length_mm, csvEscape(b.cuts.join(" ")), b.waste_mm].join(
+          ",",
+        ),
+      );
+    });
+  }
+
+  const blob = new Blob(["﻿" + lines.join("\r\n")], {
+    type: "text/csv;charset=utf-8",
+  });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "bars_order.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 function CutStrip({
   stockLength,
   cuts,
+  colorFor,
 }: {
   stockLength: number;
   cuts: number[];
+  colorFor: (length: number) => string;
 }) {
-  const palette = [
-    "bg-emerald-700",
-    "bg-sky-700",
-    "bg-violet-700",
-    "bg-rose-700",
-    "bg-amber-700",
-  ];
   return (
     <div className="flex h-5 w-full overflow-hidden rounded border border-zinc-700 bg-zinc-800">
       {cuts.map((c, i) => (
         <div
           key={i}
-          style={{ width: `${(c / stockLength) * 100}%` }}
-          className={`${palette[i % palette.length]} border-r border-zinc-950 text-center text-[9px] leading-5 text-white/80`}
+          style={{ width: `${(c / stockLength) * 100}%`, backgroundColor: colorFor(c) }}
+          className="border-r border-zinc-950 text-center text-[9px] leading-5 text-white/90"
           title={`${c} mm`}
         >
           {c}
@@ -37,15 +89,33 @@ function CutStrip({
   );
 }
 
+// One stable colour per distinct piece length across the whole plan, so a given
+// length reads the same in every bar. Distinct lengths are spread evenly around
+// the hue wheel — no fixed palette to collide when there are many lengths.
+function makeColorFor(bars: { cuts: number[] }[]): (length: number) => string {
+  const lengths = [...new Set(bars.flatMap((b) => b.cuts))].sort((a, b) => a - b);
+  const hue = new Map(
+    lengths.map((len, i) => [len, Math.round((i / Math.max(lengths.length, 1)) * 360)]),
+  );
+  return (len) => `hsl(${hue.get(len) ?? 0}, 60%, 42%)`;
+}
+
 function OrderResult({ shown }: { shown: OrderPlanOut }) {
+  const colorFor = makeColorFor(shown.result.bars);
   return (
     <div className="mt-3 border-t border-zinc-800 pt-3">
       <div className="mb-2 flex items-baseline justify-between">
         <span className="text-xs text-zinc-500">
-          {shown.result.total_bought_mm / 1000} m bought
+          {(shown.result.total_bought_mm / 1000).toFixed(1)} m bought ·{" "}
+          {(shown.result.total_used_mm / 1000).toFixed(1)} m used
         </span>
         <div className="text-sm text-zinc-400">
           waste {shown.result.waste_pct}% ·{" "}
+          {(
+            (shown.result.total_bought_mm - shown.result.total_used_mm) /
+            1000
+          ).toFixed(1)}{" "}
+          m lost ·{" "}
           <span className="text-lg font-medium text-emerald-300">
             {shown.result.total_cost.toLocaleString()} ₪
           </span>
@@ -87,9 +157,13 @@ function OrderResult({ shown }: { shown: OrderPlanOut }) {
             <span className="w-20 shrink-0 text-right text-xs tabular-nums text-zinc-500">
               {b.stock_length_mm} mm
             </span>
-            <CutStrip stockLength={b.stock_length_mm} cuts={b.cuts} />
+            <CutStrip
+              stockLength={b.stock_length_mm}
+              cuts={b.cuts}
+              colorFor={colorFor}
+            />
             <span className="w-24 shrink-0 text-xs tabular-nums text-zinc-500">
-              waste {b.waste_mm}
+              waste {b.waste_mm} mm
             </span>
           </div>
         ))}
@@ -102,13 +176,17 @@ function MaterialOrderCard({
   projectId,
   material,
   existingPlan,
+  applyInventory,
   onChange,
 }: {
   projectId: number;
   material: SummaryRow;
   existingPlan: OrderPlanOut | null;
+  applyInventory: boolean;
   onChange: () => void;
 }) {
+  const nd = applyInventory ? netDemand(material) : null;
+  const orderLengths = nd ? nd.netLengths : material.lengths;
   const [stock, setStock] = useState<StockDraft[]>(() =>
     existingPlan
       ? existingPlan.params.stock.map((s) => ({
@@ -124,7 +202,30 @@ function MaterialOrderCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const shown = plan ?? existingPlan;
+  // A stored plan carries the exact pieces it was optimized against. Compare them
+  // to what the material needs *now* (net of inventory when that's on): if they
+  // differ, the saved cut layout is stale, so we hide it and re-optimize on the
+  // spot — opening Orders always reflects current quantities. Identical pieces →
+  // no work, no redundant server round-trip.
+  const currentPieces = (nd ? nd.netLengths : material.lengths).map((l) => ({
+    length_mm: l.unit_length_mm,
+    qty: l.qty,
+  }));
+  const currentSig = piecesSig(currentPieces);
+  const stale =
+    existingPlan != null && piecesSig(existingPlan.params.pieces) !== currentSig;
+  const shown = plan ?? (stale ? null : existingPlan);
+
+  const autoOptimizedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!stale || busy) return;
+    // one recompute per distinct quantity change, guarded so setState from the
+    // optimize() call itself can't re-trigger the effect into a loop
+    if (autoOptimizedFor.current === currentSig) return;
+    autoOptimizedFor.current = currentSig;
+    void optimize();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stale, currentSig]);
 
   async function optimize() {
     setError(null);
@@ -135,12 +236,26 @@ function MaterialOrderCard({
       setError("Add at least one stock length with a price.");
       return;
     }
+    // net-of-inventory: send explicit pieces (required − in stock) instead of
+    // letting the server pull gross pieces from the summary by material_key
+    let pieces: { length_mm: number; qty: number }[] | undefined;
+    if (nd) {
+      pieces = nd.netLengths.map((l) => ({
+        length_mm: l.unit_length_mm,
+        qty: l.qty,
+      }));
+      if (pieces.length === 0) {
+        setError("Fully covered by inventory — nothing to order.");
+        return;
+      }
+    }
     setBusy(true);
     try {
       const result = await api.createOrderPlan(projectId, {
         material_key: material.material_key,
         stock: stockParsed,
         kerf_mm: Number(kerf) || 0,
+        ...(pieces && { pieces }),
       });
       setPlan(result);
       onChange();
@@ -153,14 +268,22 @@ function MaterialOrderCard({
 
   return (
     <div className="rounded border border-zinc-800 p-4">
-      <div className="mb-3 flex items-baseline justify-between">
-        <h3 className="font-medium">{material.material_key}</h3>
-        <span className="text-xs text-zinc-500">
-          {material.lengths.map((l) => `${l.qty}×${l.unit_length_mm}`).join(", ")}
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h3 className="flex items-center gap-2 font-medium">
+          {material.material_key}
+          {applyInventory && (
+            <span className="rounded bg-emerald-900/60 px-1.5 py-0.5 text-[10px] font-normal text-emerald-300">
+              net of stock
+            </span>
+          )}
+        </h3>
+        <span className="text-right text-xs text-zinc-500">
+          {orderLengths.map((l) => `${l.qty}×${l.unit_length_mm}`).join(", ") ||
+            "fully in stock"}
         </span>
       </div>
 
-      <div className="flex flex-wrap items-end gap-4">
+      <div className="flex flex-wrap items-start gap-4">
         <div>
           <div className="mb-1 text-xs text-zinc-400">
             Seller's stock lengths &amp; prices
@@ -220,26 +343,35 @@ function MaterialOrderCard({
           <input
             value={kerf}
             onChange={(e) => setKerf(e.target.value)}
-            className="w-24 rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm"
+            className="w-24 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm tabular-nums"
           />
         </label>
 
-        <button
-          onClick={optimize}
-          disabled={busy}
-          className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium hover:bg-emerald-600 disabled:opacity-40"
-        >
-          {busy
-            ? "Optimizing…"
-            : shown
-              ? "Re-optimize order"
-              : "Optimize order"}
-        </button>
+        <div className="flex flex-col gap-1">
+          <span className="invisible text-xs">.</span>
+          <button
+            onClick={optimize}
+            disabled={busy}
+            className="rounded bg-emerald-700 px-4 py-1 text-sm font-medium hover:bg-emerald-600 disabled:opacity-40"
+          >
+            {busy
+              ? "Optimizing…"
+              : shown
+                ? "Re-optimize order"
+                : "Optimize order"}
+          </button>
+        </div>
       </div>
 
       {error && (
         <div className="mt-2 rounded border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-300">
           {error}
+        </div>
+      )}
+
+      {busy && !shown && (
+        <div className="mt-2 text-xs text-zinc-500">
+          Updating order for current quantities…
         </div>
       )}
 
@@ -251,9 +383,11 @@ function MaterialOrderCard({
 export default function OrdersPanel({
   projectId,
   summary,
+  applyInventory = false,
 }: {
   projectId: number;
   summary: ProjectSummary | null;
+  applyInventory?: boolean;
 }) {
   const [history, setHistory] = useState<OrderPlanOut[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -301,11 +435,35 @@ export default function OrdersPanel({
 
   const shownMaterials = materials.filter((m) => checked.has(m.material_key));
 
+  // latest plan per material — the whole bars order, for one combined export
+  const latestPlans: OrderPlanOut[] = [];
+  const seenKeys = new Set<string>();
+  for (const h of history) {
+    const k = h.params.material_key;
+    if (!k || seenKeys.has(k)) continue;
+    seenKeys.add(k);
+    latestPlans.push(h);
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded border border-zinc-800 p-4">
-        <div className="mb-2 text-xs text-zinc-400">
-          Materials to order (from approved summary)
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-xs text-zinc-400">
+            Materials to order (from approved summary)
+          </span>
+          <button
+            onClick={() => exportOrdersCsv(latestPlans)}
+            disabled={latestPlans.length === 0}
+            className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700 disabled:opacity-40"
+            title={
+              latestPlans.length === 0
+                ? "No orders to export yet"
+                : "Export every material's order as one CSV"
+            }
+          >
+            Export bars order (CSV)
+          </button>
         </div>
         {materials.length === 0 ? (
           <div className="text-sm text-zinc-500">
@@ -348,6 +506,7 @@ export default function OrdersPanel({
           existingPlan={
             history.find((h) => h.params.material_key === m.material_key) ?? null
           }
+          applyInventory={applyInventory}
           onChange={refreshHistory}
         />
       ))}

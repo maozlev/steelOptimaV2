@@ -5,15 +5,25 @@ import type { ChatMessageOut, ChatScope } from "../api/types";
 /** Scoped Q&A chat. One component for all three scopes — the server decides
  * what the model gets to know (this document / this project / all projects);
  * the panel only differs in the hint line telling the user what "here" means.
+ *
+ * screenContext (optional): called at send time; its text is prepended to the
+ * outgoing message inside [[SCREEN]]…[[/SCREEN]] markers so the model knows
+ * what the operator is looking at. The block is stripped from display — the
+ * user sees only what they typed. (Server API untouched; the clean long-term
+ * fix is a view_context field on the chat POST.)
  */
+const SCREEN_RE = /\[\[SCREEN\]\][\s\S]*?\[\[\/SCREEN\]\]\s*/g;
+
 export default function ChatPanel({
   scope,
   scopeId,
   hint,
+  screenContext,
 }: {
   scope: ChatScope;
   scopeId: number;
   hint: string;
+  screenContext?: () => string;
 }) {
   const [messages, setMessages] = useState<ChatMessageOut[]>([]);
   const [draft, setDraft] = useState("");
@@ -49,11 +59,15 @@ export default function ChatPanel({
     ]);
     setStreaming("");
     abortRef.current = new AbortController();
+    const ctx = screenContext?.();
+    const outgoing = ctx
+      ? `[[SCREEN]]\nWhat the operator currently sees on screen (context, not part of the question):\n${ctx}\n[[/SCREEN]]\n${content}`
+      : content;
     try {
       const full = await sendChatMessage(
         scope,
         scopeId,
-        content,
+        outgoing,
         (delta) => setStreaming((prev) => (prev ?? "") + delta),
         abortRef.current.signal,
       );
@@ -69,7 +83,7 @@ export default function ChatPanel({
       setStreaming(null);
       setBusy(false);
     }
-  }, [draft, busy, scope, scopeId]);
+  }, [draft, busy, scope, scopeId, screenContext]);
 
   const clear = useCallback(() => {
     api
@@ -87,7 +101,7 @@ export default function ChatPanel({
           : "self-start bg-zinc-800 text-zinc-200"
       }`}
     >
-      {content}
+      {content.replace(SCREEN_RE, "")}
     </div>
   );
 

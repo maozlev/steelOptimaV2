@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ThemeToggle from "./components/ThemeToggle";
 import AggregatedSummaryView from "./views/AggregatedSummaryView";
 import DocTablesView from "./views/DocTablesView";
 import MergedSummaryView from "./views/MergedSummaryView";
@@ -18,7 +19,7 @@ type View =
   | { kind: "summary" }
   | { kind: "mergedSummary" };
 
-export default function App() {
+function RoutedView() {
   const [view, setView] = useState<View>({ kind: "projects" });
 
   if (view.kind === "workspace") {
@@ -108,5 +109,14 @@ export default function App() {
       onMergedSummary={() => setView({ kind: "mergedSummary" })}
       onCutoutBom={() => setView({ kind: "summary" })}
     />
+  );
+}
+
+export default function App() {
+  return (
+    <>
+      <RoutedView />
+      <ThemeToggle />
+    </>
   );
 }

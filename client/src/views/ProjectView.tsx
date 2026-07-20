@@ -7,12 +7,15 @@ import type {
 } from "../api/types";
 import BidPanel from "../components/BidPanel";
 import ChatPanel from "../components/ChatPanel";
+import InventoryPanel from "../components/InventoryPanel";
 import MaterialSummaryTable, {
   exportSummaryCsv,
 } from "../components/MaterialSummaryTable";
 import OrdersPanel from "../components/OrdersPanel";
 import QueuePanel from "../components/QueuePanel";
 import UploadDropzone from "../components/UploadDropzone";
+import { netDemand } from "../mockInventory";
+import { readViewContext, setViewSection } from "../viewContext";
 
 const JOB_LABEL: Record<string, string> = {
   queued: "QUEUED",
@@ -21,7 +24,7 @@ const JOB_LABEL: Record<string, string> = {
   failed: "FAILED",
 };
 
-type Tab = "documents" | "tables" | "summary" | "bid" | "orders" | "chat";
+type Tab = "documents" | "tables" | "summary" | "bid" | "orders" | "inventory";
 
 const KIND_STYLE: Record<string, string> = {
   materials: "bg-emerald-900/60 text-emerald-300",
@@ -52,6 +55,8 @@ export default function ProjectView({
     null,
   );
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  const [applyInventory, setApplyInventory] = useState(false);
+  const [dockOpen, setDockOpen] = useState(true);
   const queue = useRef<File[]>([]);
   const pumping = useRef(false);
 
@@ -107,6 +112,66 @@ export default function ProjectView({
     if (tab === "summary" || tab === "orders" || tab === "bid") void loadSummary();
   }, [tab, loadTables, loadSummary]);
 
+  // Publish what this screen is showing, so the assistant dock answers about
+  // what the operator actually sees. Panels with their own data (Bid, Orders,
+  // Inventory) publish a richer "panel" section themselves.
+  useEffect(() => {
+    if (!project) return;
+    const lines: string[] = [
+      `Screen: project "${project.name}", tab "${tab}". Inventory mode ${
+        applyInventory
+          ? "ON — quantities shown net of stock (to-order = required − in stock)"
+          : "off — gross quantities"
+      }.`,
+    ];
+    if (tab === "documents") {
+      lines.push("Documents listed:");
+      for (const d of project.documents)
+        lines.push(
+          `- ${d.filename}: ${d.page_count} pages, ${d.table_count} tables, ` +
+            `${d.needs_review_rows} rows to review, scan=${d.last_table_job_status ?? "none"}`,
+        );
+    }
+    if (tab === "tables") {
+      lines.push("Detected tables listed:");
+      for (const [docId, docTables] of tables) {
+        const doc = project.documents.find((x) => x.id === docId);
+        for (const t of docTables)
+          lines.push(
+            `- ${doc?.filename} / ${t.title || `Table #${t.id}`}: ${t.n_rows}×${t.n_cols}, ` +
+              `kind=${t.kind}, status=${t.status}, ${t.needs_review_rows} flagged`,
+          );
+      }
+    }
+    if ((tab === "summary" || tab === "orders" || tab === "bid") && summary) {
+      lines.push(`Approved materials (${summary.rows.length} lines):`);
+      for (const r of summary.rows.slice(0, 40)) {
+        if (applyInventory) {
+          const nd = netDemand(r);
+          lines.push(
+            `- ${r.material_key}: required ${r.qty}, in stock ${nd.inStockQty}, ` +
+              `to order ${nd.netQty}, net weight ${(r.total_weight_kg * nd.factor).toFixed(1)} kg`,
+          );
+        } else {
+          lines.push(
+            `- ${r.material_key}: qty ${r.qty}, ${(r.total_length_mm / 1000).toFixed(1)} m, ` +
+              `${r.total_weight_kg.toFixed(1)} kg`,
+          );
+        }
+      }
+    }
+    setViewSection("view", lines.join("\n"));
+  }, [project, tab, summary, applyInventory, tables]);
+
+  // leaving the project view: the dock goes with it, so drop its context
+  useEffect(
+    () => () => {
+      setViewSection("view", null);
+      setViewSection("panel", null);
+    },
+    [],
+  );
+
   const pump = useCallback(async () => {
     if (pumping.current) return;
     pumping.current = true;
@@ -158,7 +223,9 @@ export default function ProjectView({
   const isCutouts = project.kind === "cutouts";
 
   return (
-    <div className="mx-auto flex h-full max-w-5xl flex-col gap-4 p-8">
+    <div className="flex h-full">
+      <div className="min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex h-full max-w-5xl flex-col gap-4 p-8">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
@@ -186,6 +253,7 @@ export default function ProjectView({
         {!isCutouts && tabButton("summary", "📋 Summary")}
         {!isCutouts && tabButton("bid", "💰 Bid")}
         {!isCutouts && tabButton("orders", "✂ Orders")}
+        {!isCutouts && tabButton("inventory", "📦 Inventory")}
         {!isCutouts && tabButton("chat", "💬 Chat")}
       </nav>
 
@@ -403,7 +471,19 @@ export default function ProjectView({
         {tab === "summary" &&
           (summary ? (
             <div>
-              <div className="mb-3 flex justify-end">
+              <div className="mb-3 flex justify-end gap-2">
+                <button
+                  onClick={() => setApplyInventory((v) => !v)}
+                  disabled={summary.rows.length === 0}
+                  className={`rounded px-3 py-1.5 text-sm disabled:opacity-40 ${
+                    applyInventory
+                      ? "bg-emerald-700 font-medium hover:bg-emerald-600"
+                      : "bg-zinc-800 hover:bg-zinc-700"
+                  }`}
+                  title="Subtract what's already in stock — shows what actually needs ordering, and feeds Bid & Orders"
+                >
+                  {applyInventory ? "✓ Inventory applied" : "📦 Check inventory"}
+                </button>
                 <button
                   onClick={() =>
                     exportSummaryCsv(summary, `${project.name}-materials.csv`)
@@ -414,17 +494,28 @@ export default function ProjectView({
                   ⬇ CSV
                 </button>
               </div>
-              <MaterialSummaryTable summary={summary} />
+              <MaterialSummaryTable
+                summary={summary}
+                applyInventory={applyInventory}
+              />
             </div>
           ) : (
             <p className="text-sm text-zinc-500">Loading summary…</p>
           ))}
 
-        {tab === "bid" && <BidPanel projectId={projectId} />}
+        {tab === "bid" && (
+          <BidPanel projectId={projectId} applyInventory={applyInventory} />
+        )}
 
         {tab === "orders" && (
-          <OrdersPanel projectId={projectId} summary={summary} />
+          <OrdersPanel
+            projectId={projectId}
+            summary={summary}
+            applyInventory={applyInventory}
+          />
         )}
+
+        {tab === "inventory" && <InventoryPanel />}
 
         {tab === "chat" && (
           <div className="flex h-full flex-col rounded border border-zinc-800 bg-zinc-950">
