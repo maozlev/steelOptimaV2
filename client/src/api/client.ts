@@ -188,10 +188,13 @@ export const api = {
   createOrderPlan: (
     projectId: number,
     body: {
-      stock: { length_mm: number; price: number }[];
+      stock?: { length_mm: number; price: number }[];
       kerf_mm: number;
       pieces?: { length_mm: number; qty: number }[];
       material_key?: string;
+      // 2D sheets plan (plates): both together, stock omitted
+      sheets?: { w_mm: number; h_mm: number; price: number }[];
+      pieces_2d?: { w_mm: number; h_mm: number; qty: number; key: string }[];
     },
   ) =>
     request<OrderPlanOut>(

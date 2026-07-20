@@ -315,18 +315,54 @@ export interface OrderPlanResult {
   infeasible_lengths_mm: number[];
 }
 
+export interface SheetPlacement {
+  x_mm: number;
+  y_mm: number;
+  w_mm: number;
+  h_mm: number;
+  key: string;
+  rotated: boolean;
+}
+
+export interface SheetPlanResult {
+  order: { sheet_w_mm: number; sheet_h_mm: number; count: number; unit_price: number; subtotal: number }[];
+  total_cost: number;
+  sheets: {
+    sheet_w_mm: number;
+    sheet_h_mm: number;
+    price: number;
+    placements: SheetPlacement[];
+    used_pct: number;
+  }[];
+  kerf_mm: number;
+  total_bought_m2: number;
+  total_used_m2: number;
+  waste_pct: number;
+  infeasible_plates: { w_mm: number; h_mm: number; key: string }[];
+}
+
 export interface OrderPlanOut {
   id: number;
   project_id: number;
   created_at: string;
   params: {
+    kind?: "sheets"; // absent = 1D bars plan
     material_key: string | null;
-    pieces: { length_mm: number; qty: number }[];
-    stock: { length_mm: number; price: number }[];
+    pieces?: { length_mm: number; qty: number }[];
+    stock?: { length_mm: number; price: number }[];
+    pieces_2d?: { w_mm: number; h_mm: number; qty: number; key: string }[];
+    sheets?: { w_mm: number; h_mm: number; price: number }[];
     kerf_mm: number;
   };
-  result: OrderPlanResult;
+  result: OrderPlanResult | SheetPlanResult;
 }
+
+export type BarOrderPlanOut = OrderPlanOut & { result: OrderPlanResult };
+export type SheetOrderPlanOut = OrderPlanOut & { result: SheetPlanResult };
+
+// discriminate a plan's species once, at the boundary
+export const isSheetPlan = (p: OrderPlanOut): p is SheetOrderPlanOut =>
+  p.params.kind === "sheets";
 
 export interface AggregateBom {
   documents: { id: number; filename: string }[];

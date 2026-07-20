@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import OrderPlan, Project
 from app.db.session import get_db
+from app.orders.nesting import optimize_sheets, sheet_plan_to_dict
 from app.orders.optimizer import optimize, plan_to_dict
 from app.tables.aggregate import project_summary
 
@@ -23,12 +24,29 @@ class StockIn(BaseModel):
     price: float = Field(ge=0)
 
 
+class Piece2DIn(BaseModel):
+    w_mm: float = Field(gt=0)
+    h_mm: float = Field(gt=0)
+    qty: int = Field(gt=0)
+    key: str
+
+
+class SheetIn(BaseModel):
+    w_mm: float = Field(gt=0)
+    h_mm: float = Field(gt=0)
+    price: float = Field(ge=0)
+
+
 class OrderPlanIn(BaseModel):
-    stock: list[StockIn]
+    stock: list[StockIn] = []
     kerf_mm: float = Field(default=0.0, ge=0)
     # explicit pieces, or default to a material line from the project summary
     pieces: list[PieceIn] | None = None
     material_key: str | None = None
+    # 2D sheet nesting for plates: when both are given, this is a sheets plan
+    # (material_key then names the thickness group, e.g. "SHEETS-THK-16")
+    sheets: list[SheetIn] | None = None
+    pieces_2d: list[Piece2DIn] | None = None
 
 
 def _project_or_404(db: Session, project_id: int) -> Project:
@@ -43,6 +61,35 @@ def create_order_plan(
     project_id: int, body: OrderPlanIn, db: Session = Depends(get_db)
 ):
     _project_or_404(db, project_id)
+
+    # --- 2D sheets plan (plates) — same lifecycle, different optimizer
+    if body.sheets is not None or body.pieces_2d is not None:
+        if not body.sheets or not body.pieces_2d:
+            raise HTTPException(422, "a sheets plan needs both sheets and pieces_2d")
+        plan2d = optimize_sheets(
+            [(p.w_mm, p.h_mm, p.qty, p.key) for p in body.pieces_2d],
+            [(s.w_mm, s.h_mm, s.price) for s in body.sheets],
+            body.kerf_mm,
+        )
+        result = sheet_plan_to_dict(plan2d, body.kerf_mm)
+        row = OrderPlan(
+            project_id=project_id,
+            params_json=json.dumps(
+                {
+                    "kind": "sheets",
+                    "material_key": body.material_key,
+                    "pieces_2d": [p.model_dump() for p in body.pieces_2d],
+                    "sheets": [s.model_dump() for s in body.sheets],
+                    "kerf_mm": body.kerf_mm,
+                }
+            ),
+            result_json=json.dumps(result),
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return _plan_out(row)
+
     if not body.stock:
         raise HTTPException(422, "at least one stock length required")
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { OrderPlanOut } from "../api/types";
+import type { BarOrderPlanOut } from "../api/types";
 import { MOCK_INVENTORY } from "../mockInventory";
 import {
   allocate,
@@ -40,7 +40,7 @@ export default function PlanningPanel({
   onGlobalAction?: (a: Record<string, unknown>) => Promise<string>;
 }) {
   const [plan, setPlan] = useState<PlanState>(() => loadPlan(projectId));
-  const [results, setResults] = useState<Record<string, OrderPlanOut>>({});
+  const [results, setResults] = useState<Record<string, BarOrderPlanOut>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState({ material: "", length: "", qty: "" });
@@ -111,7 +111,7 @@ export default function PlanningPanel({
         m.set(it.unit_length_mm, (m.get(it.unit_length_mm) ?? 0) + miss);
         byMat.set(it.material_key, m);
       });
-      const next: Record<string, OrderPlanOut> = {};
+      const next: Record<string, BarOrderPlanOut> = {};
       const skipped: string[] = [];
       for (const [key, lens] of byMat) {
         const stock = (plan.stock[key] ?? []).filter(
@@ -123,11 +123,11 @@ export default function PlanningPanel({
         }
         // no material_key on purpose: planning plans must not shadow the
         // tender orders shown in the Orders tab (it keys on material_key)
-        next[key] = await api.createOrderPlan(projectId, {
+        next[key] = (await api.createOrderPlan(projectId, {
           pieces: [...lens].map(([length_mm, qty]) => ({ length_mm, qty })),
           stock,
           kerf_mm: plan.kerf_mm,
-        });
+        })) as BarOrderPlanOut;
       }
       setResults(next);
       const done = Object.keys(next).length;

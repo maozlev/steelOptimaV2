@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { OrderPlanOut, ProjectSummary, SummaryRow } from "../api/types";
+import { isSheetPlan } from "../api/types";
+import type {
+  BarOrderPlanOut,
+  OrderPlanOut,
+  ProjectSummary,
+  SheetOrderPlanOut,
+  SheetPlanResult,
+  SummaryRow,
+} from "../api/types";
 import { netDemand } from "../mockInventory";
 import { setViewSection } from "../viewContext";
 
@@ -16,23 +24,34 @@ function csvEscape(v: string | number): string {
 
 // Order-independent fingerprint of a piece list, so we can tell whether a stored
 // plan was optimized against the same quantities the material needs right now.
-function piecesSig(pieces: { length_mm: number; qty: number }[]): string {
-  return pieces
+function piecesSig(pieces: { length_mm: number; qty: number }[] | undefined): string {
+  return (pieces ?? [])
     .map((p) => `${p.length_mm}:${p.qty}`)
     .sort()
     .join("|");
 }
 
-// One CSV for the whole bars order: every material's buy list and per-bar cut
-// layout in two labelled sections, a material_key column telling them apart.
+function pieces2dSig(
+  pieces: { w_mm: number; h_mm: number; qty: number; key: string }[] | undefined,
+): string {
+  return (pieces ?? [])
+    .map((p) => `${p.key}:${p.w_mm}x${p.h_mm}:${p.qty}`)
+    .sort()
+    .join("|");
+}
+
+// One CSV for the whole order: bars (buy list + per-bar cut layout) and sheets
+// (buy list + per-sheet placements), labelled sections, a key column each.
 function exportOrdersCsv(plans: OrderPlanOut[]) {
   const keyOf = (p: OrderPlanOut) => p.params.material_key ?? "order";
+  const barPlans = plans.filter((p): p is BarOrderPlanOut => !isSheetPlan(p));
+  const sheetPlans = plans.filter(isSheetPlan);
   const lines: string[] = [];
 
   lines.push("BUY");
   lines.push("material_key,stock_length_mm,bars,unit_price,subtotal");
   let grand = 0;
-  for (const p of plans) {
+  for (const p of barPlans) {
     for (const o of p.result.order) {
       lines.push(
         [csvEscape(keyOf(p)), o.stock_length_mm, o.count, o.unit_price, o.subtotal].join(","),
@@ -45,7 +64,7 @@ function exportOrdersCsv(plans: OrderPlanOut[]) {
   lines.push("");
   lines.push("CUT LAYOUT");
   lines.push("material_key,bar,stock_length_mm,cuts_mm,waste_mm");
-  for (const p of plans) {
+  for (const p of barPlans) {
     p.result.bars.forEach((b, i) => {
       lines.push(
         [csvEscape(keyOf(p)), i + 1, b.stock_length_mm, csvEscape(b.cuts.join(" ")), b.waste_mm].join(
@@ -53,6 +72,38 @@ function exportOrdersCsv(plans: OrderPlanOut[]) {
         ),
       );
     });
+  }
+
+  if (sheetPlans.length > 0) {
+    lines.push("");
+    lines.push("SHEETS BUY");
+    lines.push("group,sheet_w_mm,sheet_h_mm,sheets,unit_price,subtotal");
+    let sheetsTotal = 0;
+    for (const p of sheetPlans) {
+      for (const o of p.result.order) {
+        lines.push(
+          [csvEscape(keyOf(p)), o.sheet_w_mm, o.sheet_h_mm, o.count, o.unit_price, o.subtotal].join(","),
+        );
+      }
+      sheetsTotal += p.result.total_cost;
+    }
+    lines.push(["", "", "", "", "total", Math.round(sheetsTotal * 100) / 100].join(","));
+
+    lines.push("");
+    lines.push("SHEET LAYOUT");
+    lines.push("group,sheet,sheet_w_mm,sheet_h_mm,piece,x_mm,y_mm,w_mm,h_mm,rotated");
+    for (const p of sheetPlans) {
+      p.result.sheets.forEach((s, i) => {
+        for (const pl of s.placements) {
+          lines.push(
+            [
+              csvEscape(keyOf(p)), i + 1, s.sheet_w_mm, s.sheet_h_mm,
+              csvEscape(pl.key), pl.x_mm, pl.y_mm, pl.w_mm, pl.h_mm, pl.rotated ? 1 : 0,
+            ].join(","),
+          );
+        }
+      });
+    }
   }
 
   const blob = new Blob(["﻿" + lines.join("\r\n")], {
@@ -101,7 +152,7 @@ function makeColorFor(bars: { cuts: number[] }[]): (length: number) => string {
   return (len) => `hsl(${hue.get(len) ?? 0}, 60%, 42%)`;
 }
 
-export function OrderResult({ shown }: { shown: OrderPlanOut }) {
+export function OrderResult({ shown }: { shown: BarOrderPlanOut }) {
   const colorFor = makeColorFor(shown.result.bars);
   return (
     <div className="mt-3 border-t border-zinc-800 pt-3">
@@ -182,7 +233,7 @@ function MaterialOrderCard({
 }: {
   projectId: number;
   material: SummaryRow;
-  existingPlan: OrderPlanOut | null;
+  existingPlan: BarOrderPlanOut | null;
   applyInventory: boolean;
   onChange: () => void;
 }) {
@@ -190,7 +241,7 @@ function MaterialOrderCard({
   const orderLengths = nd ? nd.netLengths : material.lengths;
   const [stock, setStock] = useState<StockDraft[]>(() =>
     existingPlan
-      ? existingPlan.params.stock.map((s) => ({
+      ? (existingPlan.params.stock ?? []).map((s) => ({
           length_mm: String(s.length_mm),
           price: String(s.price),
         }))
@@ -199,7 +250,7 @@ function MaterialOrderCard({
   const [kerf, setKerf] = useState(
     existingPlan ? String(existingPlan.params.kerf_mm) : "3",
   );
-  const [plan, setPlan] = useState<OrderPlanOut | null>(null);
+  const [plan, setPlan] = useState<BarOrderPlanOut | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -258,7 +309,7 @@ function MaterialOrderCard({
         kerf_mm: Number(kerf) || 0,
         ...(pieces && { pieces }),
       });
-      setPlan(result);
+      setPlan(result as BarOrderPlanOut);
       onChange();
     } catch (e) {
       setError((e as Error).message);
@@ -388,27 +439,193 @@ function parsePlateKey(key: string): { thk: number; w: number; h: number } | nul
   return m ? { thk: Number(m[1]), w: Number(m[2]), h: Number(m[3]) } : null;
 }
 
-// Demand card for a plate material: what to order, by count and area. No 2D
-// nesting yet — this shows the demand the future sheet optimizer will consume.
-function PlateOrderCard({
-  material,
-  applyInventory,
+// Standard steel-sheet formats the local sellers stock; "custom" frees the inputs.
+const STD_SHEETS = [
+  { label: "1000 × 2000", w: 1000, h: 2000 },
+  { label: "1250 × 2500", w: 1250, h: 2500 },
+  { label: "1500 × 3000", w: 1500, h: 3000 },
+  { label: "1500 × 6000", w: 1500, h: 6000 },
+];
+
+interface SheetDraft {
+  preset: string; // "1000x2000" | ... | "custom"
+  w: string;
+  h: string;
+  price: string;
+}
+
+function draftFromSize(w: number, h: number, price: string): SheetDraft {
+  const std = STD_SHEETS.find((s) => s.w === w && s.h === h);
+  return { preset: std ? `${std.w}x${std.h}` : "custom", w: String(w), h: String(h), price };
+}
+
+// One stable colour per plate material across the whole plan (same idea as the
+// bars' makeColorFor, keyed by material instead of length).
+function makeKeyColors(keys: string[]): (key: string) => string {
+  const sorted = [...new Set(keys)].sort();
+  const hue = new Map(
+    sorted.map((k, i) => [k, Math.round((i / Math.max(sorted.length, 1)) * 360)]),
+  );
+  return (k) => `hsl(${hue.get(k) ?? 0}, 60%, 42%)`;
+}
+
+// A stock sheet drawn to scale with every plate placed on it.
+function SheetLayout({
+  sheet,
+  colorFor,
 }: {
-  material: SummaryRow;
-  applyInventory: boolean;
+  sheet: SheetPlanResult["sheets"][number];
+  colorFor: (key: string) => string;
 }) {
-  const nd = applyInventory ? netDemand(material) : null;
-  const qty = nd ? nd.netQty : material.qty;
-  const factor = nd ? nd.factor : 1;
-  const area = material.total_area_m2 * factor;
-  const dims = parsePlateKey(material.material_key);
+  const W = sheet.sheet_w_mm;
+  const H = sheet.sheet_h_mm;
+  const stroke = Math.max(W, H) / 400;
+  return (
+    <div className="flex items-center gap-2">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full max-w-xl rounded border border-zinc-700 bg-zinc-800"
+        style={{ aspectRatio: `${W} / ${H}`, maxHeight: 260 }}
+      >
+        {sheet.placements.map((p, i) => (
+          <g key={i}>
+            <rect
+              x={p.x_mm}
+              y={p.y_mm}
+              width={p.w_mm}
+              height={p.h_mm}
+              fill={colorFor(p.key)}
+              stroke="#09090b"
+              strokeWidth={stroke}
+            >
+              <title>{`${p.key} · ${p.w_mm}×${p.h_mm}${p.rotated ? " (rotated)" : ""}`}</title>
+            </rect>
+            <text
+              x={p.x_mm + p.w_mm / 2}
+              y={p.y_mm + p.h_mm / 2}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={Math.min(p.h_mm * 0.35, p.w_mm / 7)}
+              fill="rgba(255,255,255,0.9)"
+            >
+              {p.w_mm}×{p.h_mm}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <span className="w-28 shrink-0 text-xs tabular-nums text-zinc-500">
+        {W}×{H} mm
+        <br />
+        used {sheet.used_pct}%
+      </span>
+    </div>
+  );
+}
+
+// Order card for one THICKNESS group: plates of the same THK share stock sheets,
+// so the sheet sizes, the optimization and the buy list live at the group level.
+function SheetOrderCard({
+  projectId,
+  groupKey,
+  thk,
+  materials,
+  existingPlan,
+  applyInventory,
+  onChange,
+}: {
+  projectId: number;
+  groupKey: string;
+  thk: number | null;
+  materials: SummaryRow[];
+  existingPlan: SheetOrderPlanOut | null;
+  applyInventory: boolean;
+  onChange: () => void;
+}) {
+  const [sheets, setSheets] = useState<SheetDraft[]>(() =>
+    existingPlan?.params.sheets?.length
+      ? existingPlan.params.sheets.map((s) => draftFromSize(s.w_mm, s.h_mm, String(s.price)))
+      : [{ preset: "1500x3000", w: "1500", h: "3000", price: "" }],
+  );
+  const [kerf, setKerf] = useState(
+    existingPlan ? String(existingPlan.params.kerf_mm) : "3",
+  );
+  const [plan, setPlan] = useState<SheetOrderPlanOut | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // demand: every material in the group, net of inventory when that's on;
+  // dims come from the material key (PLATE-THK-WXH)
+  const pieces: { w_mm: number; h_mm: number; qty: number; key: string }[] = [];
+  const unsized: string[] = [];
+  for (const m of materials) {
+    const dims = parsePlateKey(m.material_key);
+    const qty = applyInventory ? netDemand(m).netQty : m.qty;
+    if (!dims) {
+      unsized.push(m.material_key);
+      continue;
+    }
+    if (qty > 0) pieces.push({ w_mm: dims.w, h_mm: dims.h, qty, key: m.material_key });
+  }
+
+  // same staleness contract as bars: a stored plan optimized against different
+  // quantities is hidden and re-run on the spot
+  const currentSig = pieces2dSig(pieces);
+  const stale =
+    existingPlan != null && pieces2dSig(existingPlan.params.pieces_2d) !== currentSig;
+  const shown = plan ?? (stale ? null : existingPlan);
+
+  const autoOptimizedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!stale || busy) return;
+    if (autoOptimizedFor.current === currentSig) return;
+    autoOptimizedFor.current = currentSig;
+    void optimize();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stale, currentSig]);
+
+  async function optimize() {
+    setError(null);
+    const sheetsParsed = sheets
+      .map((s) => ({ w_mm: Number(s.w), h_mm: Number(s.h), price: Number(s.price) }))
+      .filter((s) => s.w_mm > 0 && s.h_mm > 0 && s.price >= 0 && !Number.isNaN(s.price));
+    if (sheetsParsed.length === 0) {
+      setError("Add at least one sheet size with a price.");
+      return;
+    }
+    if (pieces.length === 0) {
+      setError("Fully covered by inventory — nothing to order.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api.createOrderPlan(projectId, {
+        material_key: groupKey,
+        sheets: sheetsParsed,
+        pieces_2d: pieces,
+        kerf_mm: Number(kerf) || 0,
+      });
+      setPlan(result as SheetOrderPlanOut);
+      onChange();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function setSheet(i: number, patch: Partial<SheetDraft>) {
+    setSheets((prev) => prev.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  }
+
+  const colorFor = makeKeyColors(pieces.map((p) => p.key));
+
   return (
     <div className="rounded border border-zinc-800 p-4">
-      <div className="mb-2 flex items-baseline justify-between gap-3">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
         <h3 className="flex items-center gap-2 font-medium">
-          {material.material_key}
+          {thk != null ? `Plates THK ${thk} mm` : groupKey}
           <span className="rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] font-normal text-sky-300">
-            plate
+            sheets
           </span>
           {applyInventory && (
             <span className="rounded bg-emerald-900/60 px-1.5 py-0.5 text-[10px] font-normal text-emerald-300">
@@ -417,18 +634,183 @@ function PlateOrderCard({
           )}
         </h3>
         <span className="text-right text-xs text-zinc-500">
-          {qty > 0
-            ? `order ${qty} pcs${dims ? ` · ${dims.w}×${dims.h}×${dims.thk} mm` : ""}${
-                area > 0 ? ` · ${area.toFixed(2)} m²` : ""
-              }`
-            : "fully in stock"}
+          {pieces.map((p) => `${p.qty}×${p.w_mm}×${p.h_mm}`).join(", ") ||
+            "fully in stock"}
         </span>
       </div>
-      <p className="text-xs text-zinc-500">
-        Plates are ordered by piece and cut from stock sheets — 2D sheet nesting
-        (which sheet sizes to buy, how to lay the plates out) is not built yet.
-        Until then, this line is the demand: quantity, size and total area.
-      </p>
+
+      {unsized.length > 0 && (
+        <div className="mb-2 rounded border border-amber-900 bg-amber-950/50 px-3 py-2 text-xs text-amber-300">
+          No W×H for {unsized.join(", ")} — these lines are not in the layout.
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-start gap-4">
+        <div>
+          <div className="mb-1 text-xs text-zinc-400">
+            Seller's sheet sizes &amp; prices
+          </div>
+          {sheets.map((s, i) => (
+            <div key={i} className="mb-1 flex items-center gap-2">
+              <select
+                value={s.preset}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "custom") {
+                    setSheet(i, { preset: "custom" });
+                  } else {
+                    const std = STD_SHEETS.find((x) => `${x.w}x${x.h}` === v)!;
+                    setSheet(i, { preset: v, w: String(std.w), h: String(std.h) });
+                  }
+                }}
+                className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
+              >
+                {STD_SHEETS.map((x) => (
+                  <option key={`${x.w}x${x.h}`} value={`${x.w}x${x.h}`}>
+                    {x.label}
+                  </option>
+                ))}
+                <option value="custom">custom…</option>
+              </select>
+              {s.preset === "custom" && (
+                <>
+                  <input
+                    value={s.w}
+                    onChange={(e) => setSheet(i, { w: e.target.value })}
+                    placeholder="W mm"
+                    className="w-20 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm tabular-nums"
+                  />
+                  <span className="text-xs text-zinc-500">×</span>
+                  <input
+                    value={s.h}
+                    onChange={(e) => setSheet(i, { h: e.target.value })}
+                    placeholder="H mm"
+                    className="w-20 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm tabular-nums"
+                  />
+                </>
+              )}
+              <span className="text-xs text-zinc-500">@</span>
+              <input
+                value={s.price}
+                onChange={(e) => setSheet(i, { price: e.target.value })}
+                placeholder="price"
+                className="w-24 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm tabular-nums"
+              />
+              <span className="text-xs text-zinc-500">₪ / sheet</span>
+              {sheets.length > 1 && (
+                <button
+                  onClick={() => setSheets((prev) => prev.filter((_, j) => j !== i))}
+                  className="rounded px-1.5 text-zinc-500 hover:text-red-400"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            onClick={() =>
+              setSheets((prev) => [
+                ...prev,
+                { preset: "1250x2500", w: "1250", h: "2500", price: "" },
+              ])
+            }
+            className="mt-1 rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700"
+          >
+            + sheet size
+          </button>
+        </div>
+
+        <label className="flex flex-col gap-1 text-xs text-zinc-400">
+          Kerf mm (lost per cut)
+          <input
+            value={kerf}
+            onChange={(e) => setKerf(e.target.value)}
+            className="w-24 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm tabular-nums"
+          />
+        </label>
+
+        <div className="flex flex-col gap-1">
+          <span className="invisible text-xs">.</span>
+          <button
+            onClick={optimize}
+            disabled={busy}
+            className="rounded bg-emerald-700 px-4 py-1 text-sm font-medium hover:bg-emerald-600 disabled:opacity-40"
+          >
+            {busy ? "Optimizing…" : shown ? "Re-optimize order" : "Optimize order"}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mt-2 rounded border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+      {busy && !shown && (
+        <div className="mt-2 text-xs text-zinc-500">
+          Updating order for current quantities…
+        </div>
+      )}
+
+      {shown && (
+        <div className="mt-3 border-t border-zinc-800 pt-3">
+          <div className="mb-2 flex items-baseline justify-between">
+            <span className="text-xs text-zinc-500">
+              {shown.result.total_bought_m2.toFixed(2)} m² bought ·{" "}
+              {shown.result.total_used_m2.toFixed(2)} m² used
+            </span>
+            <div className="text-sm text-zinc-400">
+              waste {shown.result.waste_pct}% ·{" "}
+              <span className="text-lg font-medium text-emerald-300">
+                {shown.result.total_cost.toLocaleString()} ₪
+              </span>
+            </div>
+          </div>
+
+          {shown.result.infeasible_plates.length > 0 && (
+            <div className="mb-2 rounded border border-red-800 bg-red-950 px-3 py-2 text-xs text-red-300">
+              No sheet can hold{" "}
+              {shown.result.infeasible_plates
+                .map((p) => `${p.key} (${p.w_mm}×${p.h_mm})`)
+                .join(", ")}{" "}
+              — plates are cut whole. Ask the seller for bigger sheets.
+            </div>
+          )}
+
+          <table className="mb-3 w-full text-sm">
+            <thead className="text-left text-xs text-zinc-500">
+              <tr>
+                <th className="px-2 py-1 font-normal">Buy</th>
+                <th className="px-2 py-1 text-right font-normal">Sheets</th>
+                <th className="px-2 py-1 text-right font-normal">Unit ₪</th>
+                <th className="px-2 py-1 text-right font-normal">Subtotal ₪</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.result.order.map((o) => (
+                <tr
+                  key={`${o.sheet_w_mm}x${o.sheet_h_mm}`}
+                  className="border-t border-zinc-800/60"
+                >
+                  <td className="px-2 py-1">
+                    {o.sheet_w_mm}×{o.sheet_h_mm} mm
+                  </td>
+                  <td className="px-2 py-1 text-right tabular-nums">{o.count}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{o.unit_price}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{o.subtotal}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="flex flex-col gap-2">
+            {shown.result.sheets.map((s, i) => (
+              <SheetLayout key={i} sheet={s} colorFor={colorFor} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -468,17 +850,18 @@ export default function OrdersPanel({
   }, [refreshHistory]);
 
   // once history is known, pre-check every material that already has an order
-  // so the page opens showing all existing optimizations at once
+  // so the page opens showing all existing optimizations at once. Sheet plans
+  // are keyed by group (SHEETS-THK-16), so pre-check their member plates too.
   useEffect(() => {
     if (!loaded || seeded.current) return;
     seeded.current = true;
-    setChecked(
-      new Set(
-        history
-          .map((h) => h.params.material_key)
-          .filter((k): k is string => Boolean(k)),
-      ),
+    const keys = new Set(
+      history.map((h) => h.params.material_key).filter((k): k is string => Boolean(k)),
     );
+    for (const h of history.filter(isSheetPlan)) {
+      for (const p of h.params.pieces_2d ?? []) keys.add(p.key);
+    }
+    setChecked(keys);
   }, [loaded, history]);
 
   function toggle(key: string) {
@@ -494,7 +877,9 @@ export default function OrdersPanel({
   useEffect(() => {
     const lines = ["order plans:"];
     for (const m of materials) {
-      const plan = history.find((h) => h.params.material_key === m.material_key);
+      const plan = history.find(
+        (h) => !isSheetPlan(h) && h.params.material_key === m.material_key,
+      ) as BarOrderPlanOut | undefined;
       if (!plan) {
         lines.push(`${m.material_key} none`);
         continue;
@@ -515,6 +900,17 @@ export default function OrdersPanel({
   }, [history, checked, summary]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shownMaterials = materials.filter((m) => checked.has(m.material_key));
+
+  // checked plates, grouped by thickness — same-THK plates cut from the same
+  // sheets, so the sheet sizes and the optimization live at the group level
+  const plateGroups: { groupKey: string; thk: number | null; members: SummaryRow[] }[] = [];
+  for (const m of plates.filter((p) => checked.has(p.material_key))) {
+    const dims = parsePlateKey(m.material_key);
+    const groupKey = dims ? `SHEETS-THK-${dims.thk}` : `SHEETS-${m.material_key}`;
+    const existing = plateGroups.find((g) => g.groupKey === groupKey);
+    if (existing) existing.members.push(m);
+    else plateGroups.push({ groupKey, thk: dims?.thk ?? null, members: [m] });
+  }
 
   // latest plan per material — the whole bars order, for one combined export
   const latestPlans: OrderPlanOut[] = [];
@@ -554,7 +950,10 @@ export default function OrdersPanel({
           <div className="flex flex-wrap gap-x-6 gap-y-2">
             {[...materials, ...plates].map((m) => {
               const ordered = history.some(
-                (h) => h.params.material_key === m.material_key,
+                (h) =>
+                  h.params.material_key === m.material_key ||
+                  (isSheetPlan(h) &&
+                    (h.params.pieces_2d ?? []).some((p) => p.key === m.material_key)),
               );
               const isPlate = m.lengths.length === 0;
               return (
@@ -591,22 +990,31 @@ export default function OrdersPanel({
           projectId={projectId}
           material={m}
           existingPlan={
-            history.find((h) => h.params.material_key === m.material_key) ?? null
+            (history.find(
+              (h) => !isSheetPlan(h) && h.params.material_key === m.material_key,
+            ) as BarOrderPlanOut | undefined) ?? null
           }
           applyInventory={applyInventory}
           onChange={refreshHistory}
         />
       ))}
 
-      {plates
-        .filter((m) => checked.has(m.material_key))
-        .map((m) => (
-          <PlateOrderCard
-            key={m.material_key}
-            material={m}
-            applyInventory={applyInventory}
-          />
-        ))}
+      {plateGroups.map(({ groupKey, thk, members }) => (
+        <SheetOrderCard
+          key={groupKey}
+          projectId={projectId}
+          groupKey={groupKey}
+          thk={thk}
+          materials={members}
+          existingPlan={
+            (history.find(
+              (h) => isSheetPlan(h) && h.params.material_key === groupKey,
+            ) as SheetOrderPlanOut | undefined) ?? null
+          }
+          applyInventory={applyInventory}
+          onChange={refreshHistory}
+        />
+      ))}
     </div>
   );
 }
