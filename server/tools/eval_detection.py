@@ -61,44 +61,63 @@ def open_document(pdf: Path) -> fitz.Document:
     return fitz.open(pdf)
 
 
-def reported_cutouts(pdf: Path, tag: str = "") -> list[dict]:
+def reported_cutouts(pdf: Path, tag: str = "", min_score: float | None = None) -> list[dict]:
     """What the CURRENT pipeline would put in the BOM for this file.
 
-    Auto-approved only - candidates scoring below the finalize threshold are the
-    operator's problem, not the BOM's. Each entry is `shape_metrics` plus the
+    Auto-approved only by default - candidates scoring below the finalize threshold
+    are the operator's problem, not the BOM's. Each entry is `shape_metrics` plus the
     centroid in page points, so callers can check WHERE a cutout is and not only
     that something of the right size exists somewhere.
+
+    Pass `min_score=0.0` to get everything the detector saw. The two questions are
+    different and must not be conflated: "never miss a real hole" is about what was
+    DETECTED, while the BOM is about what was AUTO-APPROVED. A freeform cutout carries
+    a -0.3 penalty and can never reach 0.90, so it is correctly surfaced for review
+    rather than silently dropped - scoring that as a miss would be wrong.
     """
     doc = open_document(pdf)
-    out: list[dict] = []
     try:
-        for pno in range(doc.page_count):
-            page = doc[pno]
-            page_kind = classify_page(page)
-            rp, dpi = "", settings.render_dpi
-            if page_kind == "raster":
-                # scans go through the CV pipeline exactly as ingestion runs it
-                rp = Path(tempfile.gettempdir()) / f"eval_{tag or pdf.stem}_{pno}.png"
-                dpi = render_page(page, rp, settings.render_dpi)
-
-            class _Row:  # _page_candidates only reads these
-                index = pno
-                kind = page_kind
-                render_path = str(rp)
-                render_dpi = dpi
-
-            cands = _page_candidates(doc, _Row())
-            for c, s in zip(cands, score_candidates(cands)):
-                if s >= settings.finalize_threshold:
-                    m = shape_metrics(c.polygon, c.kind)
-                    m["center_pt"] = [
-                        round(c.polygon.centroid.x, 2),
-                        round(c.polygon.centroid.y, 2),
-                    ]
-                    m["page"] = pno
-                    out.append(m)
+        return candidates_in_doc(doc, tag or pdf.stem, min_score)
     finally:
         doc.close()
+
+
+def candidates_in_doc(
+    doc: fitz.Document, tag: str = "", min_score: float | None = None
+) -> list[dict]:
+    """As `reported_cutouts`, for a document already in memory."""
+    floor = settings.finalize_threshold if min_score is None else min_score
+    out: list[dict] = []
+    for pno in range(doc.page_count):
+        page = doc[pno]
+        page_kind = classify_page(page)
+        rp, dpi = "", settings.render_dpi
+        if page_kind == "raster":
+            # scans go through the CV pipeline exactly as ingestion runs it
+            rp = Path(tempfile.gettempdir()) / f"eval_{tag}_{pno}.png"
+            dpi = render_page(page, rp, settings.render_dpi)
+
+        class _Row:  # _page_candidates only reads these
+            index = pno
+            kind = page_kind
+            render_path = str(rp)
+            render_dpi = dpi
+
+        cands = _page_candidates(doc, _Row())
+        for c, s in zip(cands, score_candidates(cands)):
+            if s < floor:
+                continue
+            m = shape_metrics(c.polygon, c.kind)
+            m["center_pt"] = [
+                round(c.polygon.centroid.x, 2),
+                round(c.polygon.centroid.y, 2),
+            ]
+            m["page"] = pno
+            m["score"] = round(s, 3)
+            m["kind"] = c.kind
+            bx = c.polygon.bounds
+            m["bbox_pt"] = [round(bx[2] - bx[0], 2), round(bx[3] - bx[1], 2)]
+            out.append(m)
     return out
 
 

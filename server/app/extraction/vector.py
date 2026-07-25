@@ -42,6 +42,24 @@ NESTED_MAX_RATIO = 0.95
 # hull sliver along a near-straight arc can accidentally fit a rectangle, so both gates
 # are kept.
 NOTCH_MIN_HOST_FRAC = 0.01
+# A notch does not have to be RECTANGULAR. Reusing SLOT_FIT_THRESHOLD (0.90) here — a gate
+# designed for enclosed cutouts — silently excluded every round-bottomed bite, which is
+# standard steel practice (coped, radiused and drainage notches). The numbers are not
+# marginal and no tuning of the rectangle fit can fix them: a half-disc fills exactly
+# pi/4 = 0.785 of its bounding box by construction.
+#
+# Measured over the synthetic notch family, real cuts and part-shape separate cleanly:
+#     rectangular bite   1.000     <- real cut
+#     stepped bite       0.875     <- real cut
+#     semicircular bite  0.785     <- real cut
+#     round-ended slot   0.761     <- real cut
+#     ---------------------------- 0.70
+#     gear tooth gap     ~0.60     <- the part's own shape
+#     V bite / chamfer   0.503     <- the part's own shape
+#     tapered beam end   0.500     <- the part's own shape  (A (3))
+# A 0.16 gap, so the threshold is placed in the middle of it rather than on either edge.
+# NOTCH_MIN_HOST_FRAC still carries the size half of the test.
+NOTCH_FIT_THRESHOLD = 0.70
 
 PT_TO_MM = 25.4 / 72
 
@@ -324,7 +342,7 @@ def _notch_candidates(inner: list[tuple[Polygon, bool]], source: str) -> list[Ca
                 continue
             rect_fit, obround_fit, length, width = fits
             fit = max(rect_fit, obround_fit)
-            if fit < SLOT_FIT_THRESHOLD:
+            if fit < NOTCH_FIT_THRESHOLD:
                 continue
             # duplicate hosts (a closed loop and its own planar face) bite twice
             if any(_iou(piece, c.polygon) > DUPLICATE_IOU for c in out):

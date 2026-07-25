@@ -23,6 +23,10 @@ from app.extraction.vector import (
     ideal_obround,
 )
 
+# a circle's minimum rotated rectangle is square; anything longer than this is a slot,
+# however round its area-to-perimeter ratio makes it look
+CIRCLE_MAX_ASPECT = 1.15
+
 CIRCLE = "circle"
 RECTANGLE = "rectangle"
 SLOT = "slot"
@@ -82,8 +86,17 @@ def shape_metrics(
     if not perimeter_pt or not area_pt:
         return fallback
 
+    sides = _mrr_sides_mm(poly)
     circularity = 4 * math.pi * area_pt / perimeter_pt**2
-    if circularity >= CIRCLE_FIT_THRESHOLD:
+    # Circularity alone is not enough to call something a circle. A SQUAT OBROUND is
+    # round-ish by this measure — a stadium of aspect 1.5 scores 0.94, clearing the 0.90
+    # gate — so a 30x20 adjustment slot was reported as a Ø27.6 circle: wrong tooling,
+    # wrong cut length, and a size a fabricator cannot make. A circle is also SQUARE in
+    # its minimum rotated rectangle, so require that too and let the obround fit below
+    # take the ones that are not.
+    if circularity >= CIRCLE_FIT_THRESHOLD and (
+        sides is None or sides[0] <= CIRCLE_MAX_ASPECT * sides[1]
+    ):
         diameter = 2 * math.sqrt(area_pt / math.pi) * PT_TO_MM
         return {
             "shape": CIRCLE,
@@ -91,7 +104,6 @@ def shape_metrics(
             "cut_length_mm": round(math.pi * diameter, 2),
         }
 
-    sides = _mrr_sides_mm(poly)
     if sides is None:
         return fallback
     length, width = sides
