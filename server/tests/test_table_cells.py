@@ -15,6 +15,8 @@ from app.tables.cells import read_matrix
 from app.tables.grid import detect_grids
 from app.tables.normalize import fix_homoglyphs
 
+pytestmark = pytest.mark.slow  # OCR / CV / full job — see pyproject markers
+
 TABLES_DIR = Path(__file__).parent.parent.parent / "tables"
 FIXTURE = (
     Path(__file__).parent / "fixtures" / "tables" / "NCD5168[_EN](5).json"

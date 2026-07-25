@@ -6,33 +6,76 @@ mean something. Right now it does not.
 Everything below the "Measured today" heading was produced by running the real code
 over `tables/*.pdf` on 2026-07-25 — no estimates.
 
+## CORRECTION (2026-07-25, later the same day)
+
+**The "silent drop bug" below was wrong about what it costs, and Maoz called it.**
+He said: find the material table by keywords, and maybe there is no table in the
+file. He was right about the second part. Two measurements settled it:
+
+1. **No text layer.** `page.get_text()` returns **0 characters on nine of the ten
+   833.1 sheets** (40 words on the tenth, none of it Hebrew). All Hebrew is stroke
+   ink. Keyword matching therefore has nothing to read on those sheets, and never
+   will without an OCR model that reads Hebrew — this is not a tuning problem.
+2. **There is no BOM on those sheets to find.** Reading every cell of the two
+   ground-truth tables on 833.1-01-20:
+   - the 7×8 is a **concrete mix specification** — exposure class S5/S8, cement
+     content 400/350, w/c ratio 0.45, `CEM-I 52.5N`
+   - the 12×7 is a **pile setting-out schedule** — level, diameter, depth, count,
+     **NORTHING 176487.97 / EASTING 654411.85**, marks P1…P29
+
+   The remaining candidate grids on the other nine sheets OCR to empty cells and
+   line fragments: they are drawing geometry the ruling-line detector mistook for
+   grids, not tables at all.
+
+So the gate rejecting them is **correct behaviour**, the `expected_kind:
+"materials"` labels I put in the fixture were **wrong ground truth** (exactly the
+failure CLAUDE.md warns about, and Maoz caught it again), and the ten Hebrew
+sheets are not a recall problem at all — **they are the best precision fixture in
+the repo.** A gate that gets greedy chasing a table that isn't there turns survey
+northings into a cutting list, and nothing downstream would look wrong.
+
+What survives from the original finding: `readable` still means "the OCR returned
+characters", not "we understood them", so unreadable Hebrew ink and a genuine
+English coordinate header reach the same verdict by the same route. Today both
+answers are right. It is a blind spot, not a live loss — pinned as a fact in
+`test_table_gate.py::test_garbage_and_real_text_are_indistinguishable_to_the_gate`
+rather than asserted as a bug. It only bites the day a Hebrew sheet does carry a
+BOM, and no amount of keyword work closes it.
+
 ## Status (2026-07-25)
 
-Built and green (`258 passed, 5 xfailed` for the whole suite, ~10 min):
+Two lanes, because a suite nobody runs protects nothing:
 
-| File | Layer | What it pins |
-|---|---|---|
-| `tests/test_table_gate.py` | L0 | the classification gate, as pure unit tests on real OCR strings — 0.4 s |
-| `tests/test_table_recall.py` | L0 + L1 | ground-truth tables on the real sheets must survive the gate; NCD roles |
-| `tests/test_table_decisions.py` | L3 | **no wrong row may auto-approve** — generated BOMs, deliberate corruptions |
-| `tests/test_table_reconciliation.py` | L4 | NCD summary = printed 3814.4 kg; multi-sheet pooling; no double count |
-| `tests/bom_factory.py` | — | shared generator: BOM PDFs whose right answer is known by construction |
+```bash
+cd server
+uv run pytest -m "not slow" tests/test_table_*.py   # 88 tests, 1.9 s — pre-commit
+uv run pytest tests/test_table_*.py                 # + 51 slow, ~9 min — pre-push
+```
+
+| File | Layer | Lane | What it pins |
+|---|---|---|---|
+| `tests/test_table_classify.py` | L1 | fast | header→role mapping, header position, marker words |
+| `tests/test_table_gate.py` | L0 | fast | process-or-drop, on OCR strings captured from the sheets |
+| `tests/test_table_recall.py` | L0+L1 | slow | real sheets: BOMs survive, non-BOMs never classify materials |
+| `tests/test_table_absence.py` | L0 | slow | **"no material table here" is a correct, explicit answer** |
+| `tests/test_table_decisions.py` | L3 | slow | **no wrong row may auto-approve** — deliberate corruptions |
+| `tests/test_table_reconciliation.py` | L4 | slow | NCD = printed 3814.4 kg; pooling; no double count |
+| `tests/bom_factory.py` | — | — | shared generator: BOMs whose right answer is known by construction |
 
 Supporting changes: the gate was extracted from `service.py` into
 `classify.gate_decision()` and the header OCR into `cells.header_candidates()`, so
 the tests exercise the shipped path instead of a copy. `tools/eval_tables.py` now
 matches grids by bbox IoU instead of row/col-count similarity.
 
-Both suites were mutation-checked: forcing `row_status` to always approve turns 3
-decision tests red; making the material key document-local turns the pooling test
-red. They have teeth.
+Mutation-checked: forcing `row_status` to always approve turns 3 decision tests
+red; making the material key document-local turns the pooling test red.
 
-**5 xfails, all one bug** — the gate silently drops Hebrew material tables
-(section 1 below). `strict=True`, so they flip to failures the moment it is fixed
-and the markers must be removed.
+Only the table modules carry the `slow` marker — the drawings/extraction tests
+belong to another workstream and were left alone.
 
-Still to do: L2 cell fixtures for the 11 unlabelled sheets (needs Maoz), L1 roles
-for those sheets, the by-script accuracy breakout, and the L5 golden.
+Still to do: L2 cell fixtures for the 11 unlabelled sheets (needs Maoz — though
+see the correction above: the 833.1 sheets have no BOM cells to label), the
+by-script accuracy breakout, and the L5 golden.
 
 ---
 

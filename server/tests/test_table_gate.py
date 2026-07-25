@@ -83,40 +83,45 @@ def test_grid_with_no_ink_at_all_is_dropped():
     assert d.silently_dropped
 
 
-# --- the failure that is costing whole sheets ---------------------------------
+# --- the blind spot -----------------------------------------------------------
 
-# Verbatim OCR output for the header row of the 12x7 "piles" BOM on
-# 833.1-01-20.pdf — a real material table, confirmed in
-# tests/fixtures/tables/833.1-01-20.json. RapidOCR cannot read Hebrew, so it
-# returns Latin garbage: non-empty, so `readable` is True, so no marker word
-# matches, so the grid is declared "other" and rejected WITHOUT the VLM call
-# that exists for exactly this case.
+# Verbatim OCR output for the header row of the 12x7 pile schedule on
+# 833.1-01-20.pdf. RapidOCR cannot read Hebrew and there is no text layer on
+# those sheets (checked: get_text() returns 0 characters on nine of ten), so the
+# header comes back as Latin garbage.
 HEBREW_HEADER_AS_OCR_READS_IT = [
     "117V O9n I JU", "TIN", 'NU n"On', "019'U 'on", "NTUNJ X", "i Y", "N DU",
 ]
 
+# A genuinely readable header with no material words — a table that SHOULD be
+# dropped, and whose decision the gate reaches on solid evidence.
+READABLE_NON_MATERIAL = ["POINT", "NORTHING", "EASTING", "ELEV"]
+
 
 def test_hebrew_header_garbage_matches_no_marker_word():
-    """Documents the mechanism: this is why the gate has nothing to go on."""
     d = gate_decision(candidates(reads(*HEBREW_HEADER_AS_OCR_READS_IT), 7), 7)
     assert d.markers is False, "garbage cannot match a marker word — that is the trap"
     assert d.classification is None or d.classification.kind != "materials"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="KNOWN BUG: `readable` means 'OCR returned characters', not 'we "
-    "understood them'. Hebrew ink reads as Latin garbage -> readable=True -> "
-    "no markers -> dropped as 'other', with no VLM call and no review-queue "
-    "entry. Costs all ten 833.1 sheets. Remove this marker when the gate is fixed.",
-)
-def test_hebrew_material_table_is_not_silently_dropped():
-    """The invariant that matters: a table we could not READ must reach a human
-    or the VLM. Being unsure is fine; being silently sure is not."""
-    d = gate_decision(candidates(reads(*HEBREW_HEADER_AS_OCR_READS_IT), 7), 7)
-    assert not d.silently_dropped, (
-        f"reason={d.reason}: unreadable Hebrew header dropped as junk"
-    )
+def test_garbage_and_real_text_are_indistinguishable_to_the_gate():
+    """THE BLIND SPOT, pinned as a fact rather than asserted as a bug.
+
+    `readable` means "the OCR returned characters", not "we understood them".
+    Unreadable Hebrew ink and a genuine English coordinate header therefore reach
+    the SAME decision by the SAME route — the gate cannot tell "there are no
+    material words here" from "I could not read the words".
+
+    On the sheets we have, both answers happen to be right: neither table is a
+    BOM. The day a Hebrew sheet does carry one, this is the line that loses it,
+    silently, with the VLM escalation branch that exists for exactly that case
+    left untaken. Keyword matching cannot close this — there are no keywords to
+    match. It needs an OCR model that reads Hebrew, or the VLM.
+    """
+    garbage = gate_decision(candidates(reads(*HEBREW_HEADER_AS_OCR_READS_IT), 7), 7)
+    real = gate_decision(candidates(reads(*READABLE_NON_MATERIAL), 4), 4)
+    assert garbage.readable == real.readable is True
+    assert garbage.reason == real.reason == "readable_no_markers"
 
 
 # --- properties ---------------------------------------------------------------

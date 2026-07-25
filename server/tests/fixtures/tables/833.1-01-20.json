@@ -1,21 +1,21 @@
 {
   "comment": "Ground truth read off the sheet's own table crops (tables/833.1-01-20-table.png). Page is rotated 270 - bboxes are display-space pt.",
-  "expected_kind_confirmed_by": "UNCONFIRMED - asserted from the table crops, not yet checked by Maoz. If either of these is a schedule that should NOT enter the BOM, flip its expected_kind to 'other'.",
+  "kind_note": "Neither table is a bill of materials, confirmed by reading the OCR of every cell (2026-07-25). 'concrete-mix-spec' is a mix specification: exposure class S5/S8, cement content 400/350 kg/m3, w/c ratio 0.45, cement type CEM-I 52.5N. 'pile-coordinates' is a setting-out schedule: level, diameter, depth, count, NORTHING (176487.97), EASTING (654411.85), pile mark P1..P29. The pipeline rejecting both is CORRECT - these are the precision cases for this sheet. If Maoz wants the pile schedule quantified into the BOM (it does carry diameter/depth/count), flip its expected_kind to 'materials' and it becomes a recall case instead.",
   "page_rotation": 270,
   "tables": [
     {
-      "name": "concrete-components",
+      "name": "concrete-mix-spec",
       "rows": 7,
       "cols": 8,
       "bbox": [2237, 1218, 2793, 1488],
-      "expected_kind": "materials"
+      "expected_kind": "other"
     },
     {
-      "name": "piles",
+      "name": "pile-coordinates",
       "rows": 12,
       "cols": 7,
       "bbox": [2285, 1571, 2793, 2019],
-      "expected_kind": "materials"
+      "expected_kind": "other"
     }
   ]
 }

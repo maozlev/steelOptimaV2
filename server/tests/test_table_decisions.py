@@ -20,6 +20,8 @@ import pytest
 
 from tests.bom_factory import bom_row, by_item, run_bom
 
+pytestmark = pytest.mark.slow  # OCR / CV / full job — see pyproject markers
+
 CLEAN = [bom_row(801, 4, 1052), bom_row(802, 8, 743), bom_row(803, 2, 2077),
          bom_row(804, 6, 1357), bom_row(805, 3, 900)]
 

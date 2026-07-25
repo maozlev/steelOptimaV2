@@ -27,6 +27,8 @@ from tests.bom_factory import (
     upload_bom,
 )
 
+pytestmark = pytest.mark.slow  # OCR / CV / full job — see pyproject markers
+
 TABLES_DIR = Path(__file__).parent.parent.parent / "tables"
 NCD_PRINTED_TOTAL_KG = 3814.4  # printed on the sheet; see the NCD ground truth
 

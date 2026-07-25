@@ -6,6 +6,9 @@ must auto-approve on OCR + arithmetic alone.
 """
 
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.slow  # OCR / CV / full job — see pyproject markers
 
 TABLES_DIR = Path(__file__).parent.parent.parent / "tables"
 

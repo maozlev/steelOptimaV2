@@ -21,3 +21,11 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+
+[tool.pytest.ini_options]
+# Two lanes. `uv run pytest -m "not slow"` is the pre-commit gate: pure logic,
+# no OCR, no jobs, seconds. `uv run pytest` is the full run before a push.
+# A suite nobody runs because it takes ten minutes protects nothing.
+markers = [
+    "slow: needs OCR, CV or a full extraction job (seconds to minutes per test)",
+]

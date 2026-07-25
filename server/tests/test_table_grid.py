@@ -9,6 +9,8 @@ import pytest
 from app.tables.grid import TableGrid, detect_grids
 from app.tables.regions import render_region
 
+pytestmark = pytest.mark.slow  # OCR / CV / full job — see pyproject markers
+
 TABLES_DIR = Path(__file__).parent.parent.parent / "tables"
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "tables"
 
