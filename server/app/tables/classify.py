@@ -174,7 +174,19 @@ def classify_heuristic(
     return best
 
 
-READABLE_RATIO = 0.5  # share of inked header cells the OCR must return text for
+READABLE_RATIO = 0.5  # share of inked header WORDS the OCR must have READ
+# A cell counts as read only if the OCR was confident about it. Measured on the
+# samples: English headers come back at 0.886-1.00, Hebrew stroke ink at
+# 0.25-0.82 (it emits plausible Latin garbage - "117V O9n I JU" - at 0.47).
+# Text alone cannot separate them; confidence can, with daylight either side.
+READ_CONF_MIN = 0.85
+# ...but "I could not read this" is only worth a VLM call if the grid looks like
+# a data table in the first place. A title block is unreadable too, and there are
+# a dozen of them per sheet. Structure is the only evidence left when the words
+# are gone: enough rows and columns, and data rows that are mostly numbers.
+TABULAR_MIN_ROWS = 4
+TABULAR_MIN_COLS = 3
+TABULAR_MIN_NUMERIC_SHARE = 0.5
 
 
 @dataclass
@@ -191,7 +203,8 @@ class GateDecision:
     heuristic: TableClassification
     readable: bool
     markers: bool
-    reason: str  # printed_headers | marker_words | readable_no_markers | unreadable_ink
+    reason: str
+    tabular: bool = True
 
     @property
     def silently_dropped(self) -> bool:
@@ -201,35 +214,73 @@ class GateDecision:
         return self.classification is not None and self.classification.kind == "other"
 
 
+def _numeric_share(reads: list[CellRead]) -> float:
+    filled = [c for c in reads if (c.value or "").strip()]
+    if not filled:
+        return 0.0
+    return sum(1 for c in filled if parse_number(c.value) is not None) / len(filled)
+
+
+def looks_tabular(
+    candidates: list[tuple[str, int, list[CellRead]]], n_rows: int, n_cols: int
+) -> bool:
+    """Is this shaped like a data table, ignoring what the words say?
+
+    The evidence of last resort, for grids whose ink the OCR cannot read. Uses
+    the two GRID-row candidates (first and last row): whichever of them is a data
+    row will be mostly numbers, because digits are language-neutral even when the
+    headers are not."""
+    if n_rows < TABULAR_MIN_ROWS or n_cols < TABULAR_MIN_COLS:
+        return False
+    grid_rows = [reads for _pos, header_rows, reads in candidates if header_rows == 1]
+    if not grid_rows:
+        return False
+    return max(_numeric_share(r) for r in grid_rows) >= TABULAR_MIN_NUMERIC_SHARE
+
+
 def gate_decision(
-    candidates: list[tuple[str, int, list[CellRead]]], n_cols: int
+    candidates: list[tuple[str, int, list[CellRead]]],
+    n_cols: int,
+    n_rows: int | None = None,
 ) -> GateDecision:
     """Decide, without the VLM, whether a grid is worth processing.
 
     Maoz's rule: words like weight/kg/mm/length/total say "this is the table we
-    need". A grid whose readable context has none of them is junk and never earns
-    a VLM call; the VLM is only consulted when the OCR could not read the header
+    need". A grid whose READ context has none of them is junk and never earns a
+    VLM call; the VLM is only consulted when the OCR could not read the header
     ink (Hebrew) and so cannot testify either way.
+
+    "Read" is the load-bearing word. It used to mean "the OCR returned
+    characters", which Hebrew stroke ink satisfies by emitting confident-looking
+    Latin garbage — so the escalation branch that exists FOR Hebrew was
+    unreachable FROM Hebrew. It now means "returned characters it was confident
+    about", and an unreadable grid still has to LOOK like a table before it costs
+    a VLM call.
     """
     heuristic = classify_heuristic(
         [(pos, hr, [c.value or "" for c in reads]) for pos, hr, reads in candidates]
     )
     all_reads = [c for _, _, reads in candidates for c in reads]
     inked = [c for c in all_reads if c.source != "empty"]
-    read_ok = [c for c in inked if (c.value or "").strip()]
-    readable = bool(inked) and len(read_ok) / len(inked) >= READABLE_RATIO
+    # Judge readability on WORDS only. Digits are language-neutral and come back
+    # at ~1.0 in any script, so counting them votes "readable" on every table
+    # that has a numeric row — which is every table. Only the non-numeric cells
+    # carry information about whether this page's text is legible to us.
+    words = [c for c in inked if parse_number(c.value) is None]
+    read_ok = [
+        c for c in words if (c.value or "").strip() and c.ocr_conf >= READ_CONF_MIN
+    ]
+    # no words at all -> nothing suggests unreadable ink; treat as read
+    readable = not words or len(read_ok) / len(words) >= READABLE_RATIO
     markers = has_material_markers([c.value or "" for c in all_reads])
+    if n_rows is None:  # candidates carry the two grid rows; the rest are strips
+        n_rows = TABULAR_MIN_ROWS
+    tabular = looks_tabular(candidates, n_rows, n_cols)
 
     def made(cls, reason):
-        return GateDecision(cls, heuristic, readable, markers, reason)
+        return GateDecision(cls, heuristic, readable, markers, reason, tabular)
 
-    if heuristic.kind == "materials":
-        return made(heuristic, "printed_headers")  # printed headers identified it
-    if markers:
-        return made(heuristic, "marker_words")  # roles unclear -> VLM may sharpen
-    if readable or not inked:
-        # header text was readable and contains none of the marker words:
-        # a coordinate list, revision history or title block. Skip cheaply.
+    def rejected(reason):
         return made(
             TableClassification(
                 kind="other",
@@ -238,8 +289,21 @@ def gate_decision(
                 confidence=0.4,
                 source="heuristic",
             ),
-            "readable_no_markers",
+            reason,
         )
+
+    if heuristic.kind == "materials":
+        return made(heuristic, "printed_headers")  # printed headers identified it
+    if markers:
+        return made(heuristic, "marker_words")  # roles unclear -> VLM may sharpen
+    if readable or not inked:
+        # the header text WAS read and contains none of the marker words:
+        # a coordinate list, revision history or title block. Skip cheaply.
+        return rejected("readable_no_markers")
+    if not tabular:
+        # unreadable, but shaped like a title block or a stray pair of rulings.
+        # Nothing to escalate — the VLM would only confirm it is not a table.
+        return rejected("unreadable_not_tabular")
     return made(None, "unreadable_ink")  # only the VLM can say
 
 

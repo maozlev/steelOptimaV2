@@ -177,7 +177,7 @@ def _process_table(
     first_texts = texts_of(candidates[0][2])
     last_texts = texts_of(candidates[1][2])
 
-    decision = gate_decision(candidates, grid.n_cols)
+    decision = gate_decision(candidates, grid.n_cols, grid.n_rows)
     heuristic = decision.heuristic
     cls: TableClassification | None = decision.classification
 

@@ -1,6 +1,6 @@
 {
   "comment": "Ground truth read off the sheet's own table crops (tables/833.1-01-20-table.png). Page is rotated 270 - bboxes are display-space pt.",
-  "kind_note": "Neither table is a bill of materials, confirmed by reading the OCR of every cell (2026-07-25). 'concrete-mix-spec' is a mix specification: exposure class S5/S8, cement content 400/350 kg/m3, w/c ratio 0.45, cement type CEM-I 52.5N. 'pile-coordinates' is a setting-out schedule: level, diameter, depth, count, NORTHING (176487.97), EASTING (654411.85), pile mark P1..P29. The pipeline rejecting both is CORRECT - these are the precision cases for this sheet. If Maoz wants the pile schedule quantified into the BOM (it does carry diameter/depth/count), flip its expected_kind to 'materials' and it becomes a recall case instead.",
+  "kind_note": "Read off the OCR of every cell (2026-07-25). 'concrete-mix-spec' is a mix specification - exposure class S5/S8, cement content 400/350 kg/m3, w/c ratio 0.45, cement type CEM-I 52.5N - NOT a bill of materials, and the precision case for this sheet. 'pile-schedule' carries level, diameter, depth, count and the pile marks P1..P29 alongside its NORTHING/EASTING setting-out coordinates; Maoz's call (2026-07-25) is that the piles ARE quantifiable material, so it is a recall case.",
   "page_rotation": 270,
   "tables": [
     {
@@ -11,11 +11,11 @@
       "expected_kind": "other"
     },
     {
-      "name": "pile-coordinates",
+      "name": "pile-schedule",
       "rows": 12,
       "cols": 7,
       "bbox": [2285, 1571, 2793, 2019],
-      "expected_kind": "other"
+      "expected_kind": "materials"
     }
   ]
 }
