@@ -6,6 +6,46 @@ mean something. Right now it does not.
 Everything below the "Measured today" heading was produced by running the real code
 over `tables/*.pdf` on 2026-07-25 — no estimates.
 
+## RESOLVED (2026-07-26): the gate reads confidence now
+
+Maoz's call on the open question: **the pile schedule IS quantifiable material**
+(level, diameter, depth, count and marks P1…P29, sitting next to its setting-out
+coordinates). Flipping its `expected_kind` to `materials` turned the recall test
+red — correctly, because the gate was dropping it.
+
+There is no keyword answer, and that is settled by measurement, not opinion: those
+sheets carry **no text layer** and the OCR **cannot read the script**, so the
+keywords do not exist to be matched. What does separate them is **OCR
+confidence**, with daylight either side:
+
+| | confidence |
+|---|---|
+| English printed headers | **0.886 – 1.00** |
+| Hebrew stroke ink | **0.25 – 0.82** (the garbage `117V O9n I JU` reads at 0.47) |
+
+A cell now counts as *read* only at ≥ 0.85. Two refinements the tests forced out:
+
+- **Judge readability on words only.** Digits come back at ~1.0 in any script, so
+  counting them votes "readable" on every table that has a numeric row — which is
+  every table. The synthetic gate fixture caught this before the real sheets would
+  have.
+- **An unreadable grid must still LOOK like a table** before it costs a VLM call:
+  ≥ 4 rows, ≥ 3 columns, and a mostly-numeric data row. Structure is the only
+  evidence left when the words are gone. Without it, the fix would have sent every
+  title block and stray ruling to the model.
+
+Across all 12 sheets (73 grids): **21 escalate to the VLM** (was 14), 47 are
+dropped as not-tabular, the NCD BOM still classifies deterministically, and
+`eval_tables.py` is unchanged at 210/210. Mutation-checked — disabling the
+confidence threshold turns 4 tests red.
+
+What this does *not* do: read the Hebrew. The table now reaches the VLM instead of
+being dropped, and with the VLM off it lands in the review queue as `unknown`
+rather than vanishing. Visible beats invisible, but the VLM table path is still
+unmeasured (every table test runs `vlm: False`), so the accuracy of what comes
+back is unknown. That is the next real question, and it needs Maoz's labels on a
+Hebrew table to answer.
+
 ## CORRECTION (2026-07-25, later the same day)
 
 **The "silent drop bug" below was wrong about what it costs, and Maoz called it.**
@@ -56,7 +96,7 @@ uv run pytest tests/test_table_*.py                 # + 51 slow, ~9 min — pre-
 |---|---|---|---|
 | `tests/test_table_classify.py` | L1 | fast | header→role mapping, header position, marker words |
 | `tests/test_table_gate.py` | L0 | fast | process-or-drop, on OCR strings captured from the sheets |
-| `tests/test_table_recall.py` | L0+L1 | slow | real sheets: BOMs survive, non-BOMs never classify materials |
+| `tests/test_table_recall.py` | L0+L1 | slow | real sheets: BOMs survive (incl. the Hebrew pile schedule), non-BOMs never classify materials |
 | `tests/test_table_absence.py` | L0 | slow | **"no material table here" is a correct, explicit answer** |
 | `tests/test_table_decisions.py` | L3 | slow | **no wrong row may auto-approve** — deliberate corruptions |
 | `tests/test_table_reconciliation.py` | L4 | slow | NCD = printed 3814.4 kg; pooling; no double count |

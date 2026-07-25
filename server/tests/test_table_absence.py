@@ -1,21 +1,25 @@
-""""This document has no material table" is a correct answer, not a failure.
+"""Nothing is promoted to "materials" without evidence, and an empty answer is
+an explicit one.
 
-Maoz's point, and the sample set proves it: the ten 833.1 sheets are structural
-plans. Their only real tables are a title block, a revision box, a concrete mix
-specification and a pile setting-out schedule. Reading every cell of the two
-largest confirmed it — the mix table holds exposure classes and w/c ratios, the
-pile table holds NORTHING/EASTING survey coordinates. There is no BOM on those
-sheets to find.
+Maoz's point: a file may simply contain no material table, and that has to be a
+correct answer rather than a prompt to go looking harder. The 833.1 sheets are
+structural plans — a title block, a revision box, a concrete mix specification
+(exposure classes, w/c ratios), a pile schedule, and a dozen stray rulings the
+grid detector picks up off the drawing itself. One of those, the pile schedule,
+IS material and is covered as a recall case in test_table_recall.py. Everything
+else on the sheet must stay out of the BOM.
 
-That makes them the most valuable PRECISION fixture in the repo. A gate that
-gets greedy — chasing a missing table by loosening the keyword rule, or letting
-the VLM classify every grid it cannot read — turns survey coordinates into a
-cutting list. That failure costs more than a missed table, because nothing
-downstream looks wrong: the numbers are plausible, the order is placed.
+That makes these sheets the most valuable PRECISION fixture in the repo. The gate
+now escalates unreadable Hebrew grids to the VLM instead of dropping them, which
+is the right call and also the dangerous direction: a gate that keeps loosening
+turns survey northings into a cutting list, and nothing downstream looks wrong —
+the numbers are plausible and the order gets placed. So with the VLM off, no grid
+on this sheet may come back classified `materials` on deterministic evidence
+alone.
 
-The other half is the honesty requirement. A document with no material table
-must come back as an explicit, reviewable empty — rejected grids still listed
-and still revivable by hand — not as a silent nothing.
+The other half is honesty. A document with nothing approvable in it must come
+back as an explicit, reviewable empty — rejected grids still listed and still
+revivable by hand — not as a silent nothing and not as a crash.
 """
 
 from pathlib import Path
@@ -26,10 +30,9 @@ TABLES_DIR = Path(__file__).parent.parent.parent / "tables"
 
 pytestmark = pytest.mark.slow
 
-# Structural plan sheets confirmed to carry no bill of materials. One is enough:
-# a full job on an A0 Hebrew sheet is ~65s, and the other nine fail the same way
-# if they fail at all. The cheap per-grid version of this check lives in
-# test_table_recall.py (precision cases) and test_table_gate.py.
+# One sheet is enough: a full job on an A0 Hebrew sheet is ~65s, and the other
+# nine fail the same way if they fail at all. The cheap per-grid version of this
+# check lives in test_table_recall.py (precision cases) and test_table_gate.py.
 NO_BOM_SHEETS = ["833.1-01-20.pdf"]
 
 
@@ -55,15 +58,29 @@ def scanned_plan_sheet(client, wait_job, request):
     return project_id, doc, tables
 
 
-def test_no_material_table_is_invented(scanned_plan_sheet):
-    """The assertion these sheets exist for."""
+def test_nothing_is_promoted_to_materials_without_evidence(scanned_plan_sheet):
+    """The assertion these sheets exist for. With the VLM off, no grid here can
+    be READ — so none of them may be asserted to be a bill of materials. The one
+    grid that really is material (the pile schedule) must arrive as `unknown`
+    for a human, not as a confident `materials` nobody checked."""
     _project_id, doc, tables = scanned_plan_sheet
     materials = [t for t in tables if t["kind"] == "materials"]
     assert materials == [], (
-        f"{doc['filename']}: invented {len(materials)} material table(s) "
-        f"from a drawing that has none — "
+        f"{doc['filename']}: {len(materials)} grid(s) claimed as materials on a "
+        f"sheet whose text the OCR cannot read — "
         f"{[(t['n_rows'], t['n_cols']) for t in materials]}"
     )
+
+
+def test_the_real_table_survives_as_unknown_not_rejected(scanned_plan_sheet):
+    """The recall half, end to end: the 12x7 pile schedule must come back in a
+    reviewable state. Before the confidence fix it was status 'rejected' and
+    absent from every counter — the sheet reported clean and empty."""
+    _project_id, _doc, tables = scanned_plan_sheet
+    pile = [t for t in tables if (t["n_rows"], t["n_cols"]) == (12, 7)]
+    assert pile, "the pile schedule grid was not detected at all"
+    assert pile[0]["kind"] == "unknown", pile[0]["kind"]
+    assert pile[0]["status"] != "rejected", "silently dropped again"
 
 
 def test_no_rows_reach_the_summary(client, scanned_plan_sheet):
