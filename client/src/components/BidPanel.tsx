@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { BidOut, PriceEntry, PricingUnit } from "../api/types";
+import { materialCategory, type MaterialCategory } from "../materials";
 import { netDemand } from "../mockInventory";
 import { setViewSection } from "../viewContext";
 
@@ -10,6 +11,13 @@ const UNIT_LABEL: Record<PricingUnit, string> = {
   per_unit: "₪ / unit",
   per_m2: "₪ / m²",
 };
+
+// bars are priced by length/weight/piece; plates by area/weight/piece — never
+// a bar by area or a plate by length
+const BAR_UNITS: PricingUnit[] = ["per_kg", "per_m", "per_unit"];
+const PLATE_UNITS: PricingUnit[] = ["per_kg", "per_m2", "per_unit"];
+const unitsFor = (cat: MaterialCategory): PricingUnit[] =>
+  cat === "plate" ? PLATE_UNITS : BAR_UNITS;
 
 export default function BidPanel({
   projectId,
@@ -22,10 +30,14 @@ export default function BidPanel({
   const [drafts, setDrafts] = useState<Map<string, PriceEntry>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  // The unit a freshly-priced line inherits, and what the top-of-panel dropdown
-  // stamps onto every line at once — so the operator sets "price by kg" once
-  // instead of clicking the per-line select on every row.
-  const [defaultUnit, setDefaultUnit] = useState<PricingUnit>("per_kg");
+  // Per-category default unit: bars and plates are priced differently, so each
+  // has its own "price all … by" control. A freshly-priced line inherits its
+  // category's default; the control stamps it onto every priced line of that
+  // category at once.
+  const [barUnit, setBarUnit] = useState<PricingUnit>("per_kg");
+  const [plateUnit, setPlateUnit] = useState<PricingUnit>("per_kg");
+  const unitDefault = (key: string): PricingUnit =>
+    materialCategory(key) === "plate" ? plateUnit : barUnit;
 
   const refresh = useCallback(
     () => api.getBid(projectId).then(setBid).catch((e) => setError(e.message)),
@@ -67,20 +79,22 @@ export default function BidPanel({
       const current: PriceEntry = prev.get(key) ?? {
         material_key: key,
         price: row?.price ?? 0,
-        pricing_unit: row?.pricing_unit ?? defaultUnit,
+        pricing_unit: row?.pricing_unit ?? unitDefault(key),
       };
       return new Map(prev).set(key, { ...current, ...patch });
     });
   }
 
-  // Stamp one unit onto every line that already carries a price (saved or drafted),
-  // and make it the default for lines priced later. Lines still without a price are
+  // Stamp one unit onto every PRICED line of a category (bars or plates), and
+  // make it that category's default for lines priced later. Unpriced lines are
   // left alone — we don't want to silently turn them into priced-at-0 rows.
-  function applyUnitToAll(u: PricingUnit) {
-    setDefaultUnit(u);
+  function applyUnitToCategory(cat: MaterialCategory, u: PricingUnit) {
+    if (cat === "plate") setPlateUnit(u);
+    else setBarUnit(u);
     setDrafts((prev) => {
       const next = new Map(prev);
       for (const row of bid?.rows ?? []) {
+        if (materialCategory(row.material_key) !== cat) continue;
         const existing = next.get(row.material_key);
         const hasPrice = existing ? existing.price > 0 : row.price != null;
         if (!hasPrice) continue;
@@ -121,6 +135,9 @@ export default function BidPanel({
     );
   }
 
+  const hasBars = bid.rows.some((r) => materialCategory(r.material_key) !== "plate");
+  const hasPlates = bid.rows.some((r) => materialCategory(r.material_key) === "plate");
+
   // quantities/prices are all linear in qty, so net-of-inventory scales each
   // line and the bid total by factor = netQty / grossQty
   const netTotal = applyInventory
@@ -151,21 +168,41 @@ export default function BidPanel({
           in the total.
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-zinc-400">Price all lines by</span>
-        <select
-          value={defaultUnit}
-          onChange={(e) => applyUnitToAll(e.target.value as PricingUnit)}
-          className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
-        >
-          {(Object.keys(UNIT_LABEL) as PricingUnit[]).map((u) => (
-            <option key={u} value={u}>
-              {UNIT_LABEL[u]}
-            </option>
-          ))}
-        </select>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+        {hasBars && (
+          <label className="flex items-center gap-2">
+            <span className="text-zinc-400">Price bars by</span>
+            <select
+              value={barUnit}
+              onChange={(e) => applyUnitToCategory("bar", e.target.value as PricingUnit)}
+              className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
+            >
+              {BAR_UNITS.map((u) => (
+                <option key={u} value={u}>
+                  {UNIT_LABEL[u]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {hasPlates && (
+          <label className="flex items-center gap-2">
+            <span className="text-zinc-400">Price plates by</span>
+            <select
+              value={plateUnit}
+              onChange={(e) => applyUnitToCategory("plate", e.target.value as PricingUnit)}
+              className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
+            >
+              {PLATE_UNITS.map((u) => (
+                <option key={u} value={u}>
+                  {UNIT_LABEL[u]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <span className="text-xs text-zinc-500">
-          applies to every priced line — override a single line below if needed
+          stamps every priced line of that kind — override a single line below
         </span>
       </div>
       <table className="w-full text-sm">
@@ -229,10 +266,14 @@ export default function BidPanel({
                 </td>
                 <td className="px-2 py-1.5">
                   <select
-                    // fall back to the global unit, not "" — so the top-of-panel
-                    // dropdown visibly sets the unit on every line (even unpriced
-                    // ones) without a draft that would fake a price of 0
-                    value={draft?.pricing_unit ?? r.pricing_unit ?? defaultUnit}
+                    // fall back to this line's category default, not "" — so the
+                    // per-category control visibly sets the unit on every line
+                    // (even unpriced) without a draft that fakes a price of 0
+                    value={
+                      draft?.pricing_unit ??
+                      r.pricing_unit ??
+                      unitDefault(r.material_key)
+                    }
                     onChange={(e) =>
                       setDraft(r.material_key, {
                         pricing_unit: e.target.value as PricingUnit,
@@ -240,7 +281,7 @@ export default function BidPanel({
                     }
                     className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
                   >
-                    {(Object.keys(UNIT_LABEL) as PricingUnit[]).map((u) => (
+                    {unitsFor(materialCategory(r.material_key)).map((u) => (
                       <option key={u} value={u}>
                         {UNIT_LABEL[u]}
                       </option>
