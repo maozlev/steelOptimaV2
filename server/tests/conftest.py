@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 PDFS_DIR = Path(__file__).parent.parent.parent / "pdfs"
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")  # stateless factory — module-scoped fixtures need it
 def wait_job():
     import time
 

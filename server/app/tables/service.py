@@ -27,10 +27,9 @@ from app.tables import cells as cells_mod
 from app.tables.classify import (
     TableClassification,
     classification_to_json,
-    classify_heuristic,
     classify_with_vlm,
     data_row_indices,
-    has_material_markers,
+    gate_decision,
     read_declared_total_weight,
 )
 from app.tables.grid import TableGrid, detect_grids
@@ -173,72 +172,14 @@ def _process_table(
     # OCR candidate header rows: first/last grid row, plus the strips just
     # above/below the grid (the NCD BOM's header is OUTSIDE the grid)
     image = cells_mod.TableImage(page, grid, dpi)
-
-    def _grid_row_reads(r: int) -> list[cells_mod.CellRead]:
-        return [
-            cells_mod.ocr_cell(image.cell_image(r, c)) for c in range(grid.n_cols)
-        ]
-
-    heights = [b - a for a, b in zip(grid.row_edges, grid.row_edges[1:])]
-    med = sorted(heights)[len(heights) // 2]
-
-    def _strip_reads(above: bool) -> list[cells_mod.CellRead]:
-        y0, y1 = (
-            (grid.bbox[1] - 1.9 * med, grid.bbox[1] - 0.05)
-            if above
-            else (grid.bbox[3] + 0.05, grid.bbox[3] + 1.9 * med)
-        )
-        if y1 <= y0:
-            return [cells_mod.CellRead() for _ in range(grid.n_cols)]
-        strip = TableGrid(
-            bbox=(grid.bbox[0], y0, grid.bbox[2], y1),
-            col_edges=grid.col_edges,
-            row_edges=[y0, y1],
-        )
-        strip_image = cells_mod.TableImage(page, strip, dpi)
-        return [
-            cells_mod.ocr_cell(strip_image.cell_image(0, c))
-            for c in range(grid.n_cols)
-        ]
-
-    candidates = [
-        ("top", 1, _grid_row_reads(0)),
-        ("bottom", 1, _grid_row_reads(grid.n_rows - 1)),
-        ("top", 0, _strip_reads(above=True)),
-        ("bottom", 0, _strip_reads(above=False)),
-    ]
+    candidates = cells_mod.header_candidates(page, grid, dpi, image=image)
     texts_of = lambda reads: [c.value or "" for c in reads]  # noqa: E731
     first_texts = texts_of(candidates[0][2])
     last_texts = texts_of(candidates[1][2])
-    heuristic = classify_heuristic(
-        [(pos, hr, texts_of(reads)) for pos, hr, reads in candidates]
-    )
 
-    # --- the gate (Maoz): words like weight/kg/mm/length/total say "this is the
-    # table we need". Grids whose readable context has none of them are junk and
-    # never earn a VLM call; the VLM is only consulted when the OCR could not
-    # read the header ink (Hebrew) and so cannot testify either way.
-    all_reads = [c for _, _, reads in candidates for c in reads]
-    inked = [c for c in all_reads if c.source != "empty"]
-    read_ok = [c for c in inked if (c.value or "").strip()]
-    readable = bool(inked) and len(read_ok) / len(inked) >= 0.5
-    markers = has_material_markers([c.value or "" for c in all_reads])
-
-    cls: TableClassification | None = None
-    if heuristic.kind == "materials":
-        cls = heuristic  # printed headers identified the table — no VLM needed
-    elif markers:
-        cls = heuristic  # marker words but roles unclear -> VLM may sharpen them
-    elif readable or not inked:
-        # header text was readable and contains none of the marker words:
-        # a coordinate list, revision history or title block. Skip cheaply.
-        cls = TableClassification(
-            kind="other",
-            column_roles=["other"] * grid.n_cols,
-            header_rows=0,
-            confidence=0.4,
-            source="heuristic",
-        )
+    decision = gate_decision(candidates, grid.n_cols)
+    heuristic = decision.heuristic
+    cls: TableClassification | None = decision.classification
 
     if cls is None or (cls.kind in ("unknown", "materials") and cls.confidence < 0.5):
         if client is not None:

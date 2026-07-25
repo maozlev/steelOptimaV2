@@ -31,6 +31,17 @@ def norm(text: str) -> str:
     return fix_homoglyphs(text or "").replace(" ", "").replace(",", "").lower()
 
 
+def bbox_iou(a, b) -> float:
+    ix0, iy0 = max(a[0], b[0]), max(a[1], b[1])
+    ix1, iy1 = min(a[2], b[2]), min(a[3], b[3])
+    if ix1 <= ix0 or iy1 <= iy0:
+        return 0.0
+    inter = (ix1 - ix0) * (iy1 - iy0)
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    return inter / (area_a + area_b - inter)
+
+
 def main() -> None:
     grand = {"cells": 0, "correct": 0, "wrong_flagged": 0, "wrong_unflagged": 0}
     for gt_path in sorted(FIXTURES_DIR.glob("*.json")):
@@ -41,11 +52,15 @@ def main() -> None:
         for expected in gt["tables"]:
             if "cells" not in expected:
                 continue
-            grid = max(
-                grids,
-                key=lambda g: -abs(g.n_rows - expected["rows"])
-                - abs(g.n_cols - expected["cols"]),
-            )
+            # match on WHERE the table is, not on its shape: two grids on a sheet
+            # can share row/col counts, and picking the wrong one reports a false
+            # 0% that looks like an OCR collapse
+            grid = max(grids, key=lambda g: bbox_iou(g.bbox, expected["bbox"]))
+            iou = bbox_iou(grid.bbox, expected["bbox"])
+            if iou < 0.8:
+                print(f"  SKIP {gt_path.stem}/{expected['name']}: no grid matches "
+                      f"the ground-truth bbox (best IoU {iou:.2f})")
+                continue
             roles = expected["column_roles"]
             matrix = read_matrix(page, grid, list(range(grid.n_rows)), dpi=864)
             per_role: dict[str, list[int]] = {}

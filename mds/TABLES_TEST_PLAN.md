@@ -6,6 +6,34 @@ mean something. Right now it does not.
 Everything below the "Measured today" heading was produced by running the real code
 over `tables/*.pdf` on 2026-07-25 — no estimates.
 
+## Status (2026-07-25)
+
+Built and green (`258 passed, 5 xfailed` for the whole suite, ~10 min):
+
+| File | Layer | What it pins |
+|---|---|---|
+| `tests/test_table_gate.py` | L0 | the classification gate, as pure unit tests on real OCR strings — 0.4 s |
+| `tests/test_table_recall.py` | L0 + L1 | ground-truth tables on the real sheets must survive the gate; NCD roles |
+| `tests/test_table_decisions.py` | L3 | **no wrong row may auto-approve** — generated BOMs, deliberate corruptions |
+| `tests/test_table_reconciliation.py` | L4 | NCD summary = printed 3814.4 kg; multi-sheet pooling; no double count |
+| `tests/bom_factory.py` | — | shared generator: BOM PDFs whose right answer is known by construction |
+
+Supporting changes: the gate was extracted from `service.py` into
+`classify.gate_decision()` and the header OCR into `cells.header_candidates()`, so
+the tests exercise the shipped path instead of a copy. `tools/eval_tables.py` now
+matches grids by bbox IoU instead of row/col-count similarity.
+
+Both suites were mutation-checked: forcing `row_status` to always approve turns 3
+decision tests red; making the material key document-local turns the pooling test
+red. They have teeth.
+
+**5 xfails, all one bug** — the gate silently drops Hebrew material tables
+(section 1 below). `strict=True`, so they flip to failures the moment it is fixed
+and the markers must be removed.
+
+Still to do: L2 cell fixtures for the 11 unlabelled sheets (needs Maoz), L1 roles
+for those sheets, the by-script accuracy breakout, and the L5 golden.
+
 ---
 
 ## 1. Measured today

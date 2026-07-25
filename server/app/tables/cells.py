@@ -194,6 +194,54 @@ def read_matrix(
     ]
 
 
+def header_candidates(
+    page: fitz.Page,
+    grid: TableGrid,
+    dpi: int,
+    image: "TableImage | None" = None,
+) -> list[tuple[str, int, list[CellRead]]]:
+    """The four places a table's header can be, OCR'd.
+
+    (header_position, header_rows, per-column reads). header_rows is 1 for a grid
+    row serving as the header and 0 for a heading strip OUTSIDE the ruling — the
+    NCD BOM prints its header below the grid, which is why the strips exist.
+
+    Extracted so the extraction job and the recall harness read the header the
+    same way; a copy in the test would stop testing the shipped path."""
+    image = image or TableImage(page, grid, dpi)
+
+    def grid_row(r: int) -> list[CellRead]:
+        return [ocr_cell(image.cell_image(r, c)) for c in range(grid.n_cols)]
+
+    heights = [b - a for a, b in zip(grid.row_edges, grid.row_edges[1:])]
+    med = sorted(heights)[len(heights) // 2]
+
+    def strip(above: bool) -> list[CellRead]:
+        y0, y1 = (
+            (grid.bbox[1] - 1.9 * med, grid.bbox[1] - 0.05)
+            if above
+            else (grid.bbox[3] + 0.05, grid.bbox[3] + 1.9 * med)
+        )
+        if y1 <= y0:
+            return [CellRead() for _ in range(grid.n_cols)]
+        strip_grid = TableGrid(
+            bbox=(grid.bbox[0], y0, grid.bbox[2], y1),
+            col_edges=grid.col_edges,
+            row_edges=[y0, y1],
+        )
+        strip_image = TableImage(page, strip_grid, dpi)
+        return [
+            ocr_cell(strip_image.cell_image(0, c)) for c in range(grid.n_cols)
+        ]
+
+    return [
+        ("top", 1, grid_row(0)),
+        ("bottom", 1, grid_row(grid.n_rows - 1)),
+        ("top", 0, strip(above=True)),
+        ("bottom", 0, strip(above=False)),
+    ]
+
+
 def read_strip_text(page: fitz.Page, bbox, dpi: int) -> list[str]:
     """Line texts from an arbitrary region (e.g. the 'Total Weight' footer above
     or below a table). Same preprocessing as cells, one rec pass per line."""

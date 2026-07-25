@@ -1,18 +1,21 @@
 {
   "comment": "Ground truth read off the sheet's own table crops (tables/833.1-01-20-table.png). Page is rotated 270 - bboxes are display-space pt.",
+  "expected_kind_confirmed_by": "UNCONFIRMED - asserted from the table crops, not yet checked by Maoz. If either of these is a schedule that should NOT enter the BOM, flip its expected_kind to 'other'.",
   "page_rotation": 270,
   "tables": [
     {
       "name": "concrete-components",
       "rows": 7,
       "cols": 8,
-      "bbox": [2237, 1218, 2793, 1488]
+      "bbox": [2237, 1218, 2793, 1488],
+      "expected_kind": "materials"
     },
     {
       "name": "piles",
       "rows": 12,
       "cols": 7,
-      "bbox": [2285, 1571, 2793, 2019]
+      "bbox": [2285, 1571, 2793, 2019],
+      "expected_kind": "materials"
     }
   ]
 }

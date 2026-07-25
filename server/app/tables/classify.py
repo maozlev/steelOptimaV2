@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import fitz
 
-from app.tables.cells import read_strip_text
+from app.tables.cells import CellRead, read_strip_text
 from app.tables.grid import TableGrid
 from app.tables.normalize import fix_homoglyphs, parse_number
 from app.tables.regions import render_region
@@ -172,6 +172,75 @@ def classify_heuristic(
     if not best.column_roles:
         best.column_roles = ["other"] * n_cols
     return best
+
+
+READABLE_RATIO = 0.5  # share of inked header cells the OCR must return text for
+
+
+@dataclass
+class GateDecision:
+    """What the deterministic gate decided about one grid, and why.
+
+    `classification is None` means the gate cannot testify either way and the VLM
+    must be asked. `reason` names the branch taken — it is what the recall tests
+    assert on, and the first thing to look at when a real material table goes
+    missing from a sheet.
+    """
+
+    classification: TableClassification | None
+    heuristic: TableClassification
+    readable: bool
+    markers: bool
+    reason: str  # printed_headers | marker_words | readable_no_markers | unreadable_ink
+
+    @property
+    def silently_dropped(self) -> bool:
+        """True when this grid ends as 'other' -> status rejected, with no VLM
+        call and no entry in the review queue. Correct for a coordinate list;
+        catastrophic for a BOM, because nothing in the product says it happened."""
+        return self.classification is not None and self.classification.kind == "other"
+
+
+def gate_decision(
+    candidates: list[tuple[str, int, list[CellRead]]], n_cols: int
+) -> GateDecision:
+    """Decide, without the VLM, whether a grid is worth processing.
+
+    Maoz's rule: words like weight/kg/mm/length/total say "this is the table we
+    need". A grid whose readable context has none of them is junk and never earns
+    a VLM call; the VLM is only consulted when the OCR could not read the header
+    ink (Hebrew) and so cannot testify either way.
+    """
+    heuristic = classify_heuristic(
+        [(pos, hr, [c.value or "" for c in reads]) for pos, hr, reads in candidates]
+    )
+    all_reads = [c for _, _, reads in candidates for c in reads]
+    inked = [c for c in all_reads if c.source != "empty"]
+    read_ok = [c for c in inked if (c.value or "").strip()]
+    readable = bool(inked) and len(read_ok) / len(inked) >= READABLE_RATIO
+    markers = has_material_markers([c.value or "" for c in all_reads])
+
+    def made(cls, reason):
+        return GateDecision(cls, heuristic, readable, markers, reason)
+
+    if heuristic.kind == "materials":
+        return made(heuristic, "printed_headers")  # printed headers identified it
+    if markers:
+        return made(heuristic, "marker_words")  # roles unclear -> VLM may sharpen
+    if readable or not inked:
+        # header text was readable and contains none of the marker words:
+        # a coordinate list, revision history or title block. Skip cheaply.
+        return made(
+            TableClassification(
+                kind="other",
+                column_roles=["other"] * n_cols,
+                header_rows=0,
+                confidence=0.4,
+                source="heuristic",
+            ),
+            "readable_no_markers",
+        )
+    return made(None, "unreadable_ink")  # only the VLM can say
 
 
 _WEIGHT_LINE_RE = re.compile(r"total\s*weight\D{0,3}(\d[\d.,]*)", re.IGNORECASE)

@@ -7,6 +7,7 @@
       "rows": 30,
       "cols": 7,
       "bbox": [2760, 1728, 3296, 2239],
+      "expected_kind": "materials",
       "column_roles": ["item_no", "qty", "description", "unit_length", "total_length", "total_weight", "other"],
       "length_unit": "mm",
       "declared_total_weight_kg": 3814.4,
