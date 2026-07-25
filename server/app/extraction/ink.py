@@ -63,6 +63,21 @@ FRAME = "frame"
 # leader lines mid-grey or a muted colour; the sheet border lighter still.
 GEOMETRY_MAX_CHANNEL = 0.4
 FRAME_MIN_CHANNEL = 0.6
+# ...but max(r,g,b) is only a measure of LIGHTNESS for grey ink. Pure red is max=1.0 and
+# was therefore classified as the sheet border and thrown away: a plate drawn on a red
+# layer returned ZERO candidates, with the fail-safe below unable to help because there
+# was no non-frame ink left to fall back to. Coloured layers are ordinary CAD practice
+# and none of the sample drawings happens to use one.
+#
+# The sheet border is always a light GREY (0.75 on every sample here). A saturated stroke
+# is a deliberate layer colour, never the border, so the frame band requires near-grey.
+# Saturated ink then lands in annotation, and where a page has nothing else the fail-safe
+# turns it back into geometry — noisy, but never blind.
+#
+# This deliberately does NOT say "saturated means geometry": the flange and the plate draw
+# their dimension lines in OLIVE (0.5, 0.5, 0.0), saturation 0.5. Olive still lands in the
+# annotation band by lightness, exactly as before.
+MAX_FRAME_SATURATION = 0.15
 
 # a page with less than this share of dark ink is not using the convention
 MIN_GEOMETRY_SHARE = 0.05
@@ -85,7 +100,7 @@ def classify_path(path: dict) -> str:
     level = max(color)
     if level < GEOMETRY_MAX_CHANNEL:
         return GEOMETRY
-    if level >= FRAME_MIN_CHANNEL:
+    if level >= FRAME_MIN_CHANNEL and max(color) - min(color) <= MAX_FRAME_SATURATION:
         return FRAME
     return ANNOTATION
 

@@ -72,6 +72,21 @@ fix in this project was found or validated by that harness, and
 *three were reverted by it*. Run it before and after any change. Trust the **macro**
 (per-drawing) number: micro flatters, because A (4) contributes 293 identical holes.
 
+It is also a **pytest gate** now (`tests/test_detection_accuracy.py`, ~30s): the score is
+recorded per drawing in `ground_truth.json` under `expect`, and it fails in BOTH directions —
+a drawing that improves fails too, demanding the number be raised. Alongside it,
+`tests/test_thresholds.py` drives each constant the pipeline branches on directly. **Probe a
+decision point to FIND a bug; keep a corpus to stop a fixed bug coming back.** The
+coloured-layer bug below was found by a 20-line probe in ten minutes and was invisible to all
+nine real drawings.
+
+**Every drawing you review is a free fixture.** `uv run python tools/export_fixture.py --all
+--merge` copies a finalized document's approved cutouts (and its rejected ones, as
+`forbidden_regions`) into ground truth. It refuses a **stale** review — one whose counts no
+longer match today's pipeline — and refuses to overwrite a hand-confirmed entry. Exported
+sizes are the pipeline's own measurements, marked `"sizes": "measured"`: they pin existence
+and position, never size, so they cannot catch a scale error.
+
 Also `uv run python tools/inspect_ink.py` — run this FIRST on any drawing that misbehaves. It
 says how the page was read (colour convention / stroke width / fail-safe) and why. A wrong
 convention decision looks like a detection bug everywhere downstream.
@@ -91,6 +106,15 @@ a click, a missed hole costs a part.
 - **Title blocks lie about scale.** Three of eight drawings print one scale on the sheet and a
   different one in the block. The printed scale only ever cross-checks; the drawing's own
   dimension lines decide. See `extraction/scale.py`.
+- **`max(r,g,b)` is a lightness test, and it only works on GREY ink.** Pure red is 1.0, so a
+  part drawn on a red/blue/green/cyan layer was classified as the sheet border and discarded —
+  **zero candidates for the whole page**, with the fail-safe unable to help because no
+  non-frame ink was left. Fixed 2026-07-25: the frame band now also requires near-grey
+  (`MAX_FRAME_SATURATION`). It deliberately does NOT say "saturated means geometry" — the
+  flange and the plate draw dimension lines in **olive (0.5, 0.5, 0)**, saturation 0.5.
+- **A finalized document can be stale, and one is.** Doc_HK3573 was finalized 2026-07-16 with
+  two real bolt holes auto-rejected at 0.38/0.40 by a pre-fix pipeline; today all 17 clear the
+  threshold. Nothing marks it. `tools/export_fixture.py` refuses to export such a document.
 - **Ink must be separated before polygonizing.** A `Ø` glyph *is* a circle — shape can never
   tell it from a hole. CAD marks layers by stroke colour or stroke width; `extraction/ink.py`
   detects which convention a page uses. Roughly half the drawings use each.
